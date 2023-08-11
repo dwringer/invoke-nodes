@@ -3,14 +3,14 @@ from typing import Literal, Optional
 from PIL import Image, ImageOps, ImageEnhance, ImageDraw
 from pydantic import Field
 
-from ..models.image import ImageCategory, ImageField, ResourceOrigin
-from .baseinvocation import (
+from invokeai.app.models.image import ImageCategory, ImageField, ResourceOrigin
+from invokeai.app.invocations.baseinvocation import (
     BaseInvocation,
     BaseInvocationOutput,
     InvocationContext,
     InvocationConfig,
 )
-from .image import (
+from invokeai.app.invocations.image import (
     PILInvocationConfig,
     ImageOutput
 )

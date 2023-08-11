@@ -1,8 +1,7 @@
 import math
 from typing import Literal
 
-from pydantic import BaseModel, Field
-import numpy as np
+from pydantic import Field
 
 from invokeai.app.invocations.baseinvocation import (
     BaseInvocation,
@@ -23,11 +22,29 @@ class IdealSizeStepperOutput(BaseInvocationOutput):
     height_b:            int = Field(description="The ideal height of the second intermediate image in pixels")
     width_c:             int = Field(description="The ideal width of the third intermediate image in pixels")
     height_c:            int = Field(description="The ideal height of the third intermediate image in pixels")
+    
     # fmt: on
 
     class Config:
-        schema_extra = {"required": ["type", "width_a", "height_a", "width_b", "height_b", "width_c", "height_c"]}
+        schema_extra = {
+            "required": [
+                "type", "width_a", "height_a", "width_b", "height_b", "width_c", "height_c"
+            ]
+        }
 
+TAPERS_IMPLEMENTED: list = [
+    "Proportional (log area)",
+    "Faster growth (log^2 area)",
+    "Even faster (linear diag.)",
+    "Largest (linear area)",
+]
+
+TAPER_FIELDNAMES: list = [
+    "<Taper A>",
+    "<Taper B>",
+    "<Taper C>",
+]
+        
 
 class IdealSizeStepperInvocation(BaseInvocation):
     """Calculates the ideal size for intermediate generations given full size and minimum size dimensions"""
@@ -35,13 +52,22 @@ class IdealSizeStepperInvocation(BaseInvocation):
     # fmt: off
     type: Literal["ideal_size_stepper"] = "ideal_size_stepper"
 
+    
     # Inputs
     full_width:  int = Field(default=None,  description="Full size width")
     full_height: int = Field(default=None,  description="Full size height")
     ideal_width:   int = Field(default=None,  description="Optimized size width")
     ideal_height:  int = Field(default=None,  description="Optimized size height")
-    stage_b:   bool = Field(default=False, description="Output two intermediates (A, B)")
-    stage_c:   bool = Field(default=False, description="Output all three intermediates (A, B, C)")
+    taper_a: Literal[tuple(TAPERS_IMPLEMENTED)] = Field(
+        default="Proportional (log area)", description="Taper used for scaling the intermediate dimensions"
+    )
+    taper_b: Literal[tuple(["<Disabled>"] + TAPER_FIELDNAMES[:1] + TAPERS_IMPLEMENTED)] = Field(
+        default="<Disabled>", description="If enabled, computes second intermediate stage (else, copies A outputs)"
+    )
+    taper_c: Literal[tuple(["<Disabled>"] + TAPER_FIELDNAMES[:2] + TAPERS_IMPLEMENTED)] = Field(
+        default="<Disabled>", description="If enabled, allocates 3 intermediate stages (else, copies B outputs)"
+    )
+
     # fmt: on
     
     class Config(InvocationConfig):
@@ -52,29 +78,75 @@ class IdealSizeStepperInvocation(BaseInvocation):
             },
         }
 
+    def get_v(self, width, height, taper):
+        v = None
+        if   taper == "Even faster (linear diag.)":
+            v = math.sqrt( width**2 + height**2 )
+        elif taper == "Largest (linear area)":
+            v = width * height
+        elif taper == "Proportional (log area)":
+            v = math.log( width * height )
+        elif taper == "Faster growth (log^2 area)":
+            v = math.log( width * height ) ** 2
+        return v
+
+    def get_next_h(self, i, dv, v_ideal, taper):
+        h = None
+        if   taper == "Even faster (linear diag.):":
+            h = int( (( v_ideal + ((1+i) * dv) ) * self.ideal_height) /
+                     math.sqrt(self.ideal_width**2 + self.ideal_height**2) )
+        elif taper == "Largest (linear area)":
+            h = int(math.sqrt( (v_ideal + ((1+i) * dv)) /
+                               (self.ideal_width / self.ideal_height) ))
+        elif taper == "Proportional (log area)":
+            h = int(math.sqrt( math.e ** (v_ideal + ((1+i) * dv)) /
+                               (self.ideal_width / self.ideal_height) ))
+        elif taper == "Faster growth (log^2 area)":
+            h = int(math.sqrt( math.e ** math.sqrt(v_ideal + ((1+i) * dv)) /
+                               (self.ideal_width / self.ideal_height) ))
+        return h
+
     def invoke(self, context:InvocationContext) -> IdealSizeStepperOutput:
         aspect = self.full_width / self.full_height
-        dims   = [[-1, -1], [-1, -1], [-1, -1]]
-        steps  = 3 if self.stage_c else (2 if self.stage_b else 1)
+        tapers = [self.taper_a, self.taper_b, self.taper_c]
+        dims   = [[-1, -1] for t in tapers]
+        steps  = len(tapers)
 
-        maxArea = self.full_width * self.full_height
-        optArea = self.ideal_width * self.ideal_height
-        
-        maxAreaLog = math.log(maxArea)
-        optAreaLog = math.log(optArea)
-        dl = maxAreaLog - optAreaLog
-        stepLog = dl / (steps + 1)
-        
-        for i in range(steps):
-            h = int(math.sqrt( (math.e ** (optAreaLog + ((1+i) * stepLog))) / aspect ))
-            h += 8 - (h % 8)
-            w = int(h * aspect)
-            w -= w % 8
-            dims[i] = [w, h]
+        # Determine total step count by last non-disabled taper selected:
+        for t in reversed(tapers):
+            if t == "<Disabled>":
+                steps -= 1
+            else:
+                break
 
-        return IdealSizeStepperOutput(width_a=dims[0][0],
-                                      height_a=dims[0][1],
-                                      width_b=dims[1][0],
-                                      height_b=dims[1][1],
-                                      width_c=dims[2][0],
-                                      height_c=dims[2][1])
+        # Copy taper settings to subsequent tapers that reuse them by name:
+        for i, taper in enumerate(tapers[1:]):
+            if taper != "<Disabled>":
+                for j, tfname in enumerate(TAPER_FIELDNAMES[:i+1]):
+                    if taper == tfname:
+                        k = j
+                        while (0 < k) and (tapers[k] == "<Disabled>"):
+                            k -= 1
+                        tapers[i+1] = tapers[k]
+                        break
+
+        # Compute dimensions stages:
+        for i in range(len(tapers)):
+            if tapers[i] is not "<Disabled>":
+                v_max = self.get_v(self.full_width, self.full_height, tapers[i])
+                v_ideal = self.get_v(self.ideal_width, self.ideal_height, tapers[i])
+                deltav = v_max - v_ideal
+                dv = deltav / (steps + 1)
+                h = self.get_next_h(i, dv, v_ideal, tapers[i])
+                h += 8 - (h % 8)
+                w = int(h*aspect)
+                w -= w % 8
+                dims[i] = [w, h]
+            else:
+                dims[i] = dims[i-1]
+
+        return IdealSizeStepperOutput(
+            width_a=dims[0][0], height_a=dims[0][1],
+            width_b=dims[1][0], height_b=dims[1][1],
+            width_c=dims[2][0], height_c=dims[2][1],
+        )
