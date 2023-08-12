@@ -132,7 +132,7 @@ class IdealSizeStepperInvocation(BaseInvocation):
 
         # Compute dimensions stages:
         for i in range(len(tapers)):
-            if tapers[i] is not "<Disabled>":
+            if tapers[i] != "<Disabled>":
                 v_max = self.get_v(self.full_width, self.full_height, tapers[i])
                 v_ideal = self.get_v(self.ideal_width, self.ideal_height, tapers[i])
                 deltav = v_max - v_ideal
