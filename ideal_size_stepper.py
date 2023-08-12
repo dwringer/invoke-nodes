@@ -92,7 +92,7 @@ class IdealSizeStepperInvocation(BaseInvocation):
 
     def get_next_h(self, i, dv, v_ideal, taper):
         h = None
-        if   taper == "Even faster (linear diag.):":
+        if   taper == "Even faster (linear diag.)":
             h = int( (( v_ideal + ((1+i) * dv) ) * self.ideal_height) /
                      math.sqrt(self.ideal_width**2 + self.ideal_height**2) )
         elif taper == "Largest (linear area)":
