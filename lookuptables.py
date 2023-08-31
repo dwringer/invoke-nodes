@@ -12,62 +12,37 @@ from invokeai.app.invocations.baseinvocation import (
     BaseInvocation,
     BaseInvocationOutput,
     InvocationContext,
-    InvocationConfig
+    invocation,
+    invocation_output,
+    InputField,
+    OutputField,
+    UIType
 )
-from invokeai.app.invocations.prompt import PromptOutput
 
 
+@invocation_output("lookups_output")
 class LookupTableOutput(BaseInvocationOutput):
     """Base class for invocations that output a JSON lookup table"""
-    #fmt: off
-    type: Literal["lookups_output"] = "lookups_output"
-
-    lookups: str = Field(default=None, description="The output lookup table")
-    #fmt: on
-
-    class Config:
-        schema_extra = {
-            'required': [
-                'type',
-                'lookups',
-            ]
-        }
+    lookups: str = OutputField(default=None, description="The output lookup table")
 
 
+@invocation_output("halved_prompt_output")
 class HalvedPromptOutput(BaseInvocationOutput):
     """Base class for invocations that return a prompt as well as each half independently"""
-    # fmt: off
-    type: Literal["halved_prompt_output"] = "halved_prompt_output"
-
-    prompt:      str = Field(default="", description="The output prompt")
-    part_a:  str = Field(default="", description="First part of the output prompt")
-    part_b: str = Field(default="", description="Second part of the output prompt")
-    # fmt: on
-
-    class Config:
-        schema_extra = {
-            'required': [
-                'type',
-                'prompt',
-                'part_a',
-                'part_b'
-            ]
-        }
+    prompt: str = OutputField(default="", description="The output prompt")
+    part_a: str = OutputField(default="", description="First part of the output prompt")
+    part_b: str = OutputField(default="", description="Second part of the output prompt")
 
 
+@invocation(
+    "lookup_table_from_file",
+    title="Lookup Table from File",
+    tags=["prompt", "lookups", "grammar", "file"],
+    category="prompt"
+)
 class LookupTableFromFileInvocation(BaseInvocation):
     """Loads a lookup table from a YAML file"""
-    type: Literal['lookup_table_from_file'] = 'lookup_table_from_file'
-
-    file_path: str = Field(description="Path to lookup table YAML file")
-
-    class Config(InvocationConfig):
-        schema_extra = {
-            "ui": {
-                "title": "Lookup Table from File",
-                "tags": ["prompt", "lookups", "grammar", "file"],
-            },
-        }
+    file_path: str = InputField(description="Path to lookup table YAML file")
 
     @validator("file_path")
     def file_path_exists(cls, v):
@@ -141,52 +116,40 @@ class LookupTableFromFileInvocation(BaseInvocation):
         return LookupTableOutput(lookups=json.dumps(lookups))
 
 
+@invocation(
+    "lookup_from_prompt",
+    title="Lookups Entry from Prompt",
+    tags=["prompt", "lookups", "grammar"],
+    category="prompt"
+)
 class LookupsEntryFromPromptInvocation(BaseInvocation):
     """Creates a lookup table of a single heading->value"""
-    #fmt: off
-    type: Literal['lookup_from_prompt'] = 'lookup_from_prompt'
-
-    #Inputs
-    heading: str = Field(default=None, description="Heading for the lookup table entry")
-    lookup: str = Field(default="", description="The entry to place under Heading in the lookup table")
-    #fmt: on
-    
-    class Config(InvocationConfig):
-        schema_extra = {
-            "ui": {
-                "title": "Lookups Entry from Prompt",
-                "tags": ["prompt", "lookups", "grammar"],
-            },
-        }
+    heading: str = InputField(default=None, description="Heading for the lookup table entry")
+    lookup: str = InputField(default="", description="The entry to place under Heading in the lookup table")
 
     def invoke(self, context:InvocationContext) ->  LookupTableOutput:
         lookups = {}
         lookups[self.heading] = [self.lookup]
         return LookupTableOutput(lookups=json.dumps(lookups))
-    
 
+    
+@invocation(
+    "prompt_from_lookup_table",
+    title="Prompt from Lookup Table",
+    tags=["prompt", "lookups", "grammar"],
+    category="prompt"
+)
 class PromptFromLookupTableInvocation(BaseInvocation):
     """Creates prompts using lookup table templates"""
-    # fmt: off
-    type: Literal['halved_prompts_from_lookups'] = 'halved_prompts_from_lookups'
-    
-    # Inputs
-    lookups: Union[str, list[str]] = Field(default=None, description="Lookup table(s) containing templates (JSON)")
-    remove_negatives: bool = Field(default=False, description="Whether to strip out text between []")
-    strip_parens_probability: float = Field(default=0.0, gte=0.0, lte=1.0,
+    lookups: list[str] = InputField(
+        description="Lookup table(s) containing templates (JSON)",
+        default_factory=list,
+        ui_type=UIType.Collection,
+        ui_hidden=False
+    )
+    remove_negatives: bool = InputField(default=False, description="Whether to strip out text between []")
+    strip_parens_probability: float = InputField(default=0.0, ge=0.0, le=1.0,
                                             description="Probability of removing attention group weightings")
-    # fmt: on
-
-    class Config(InvocationConfig):
-        schema_extra = {
-            "ui": {
-                "title": "Prompt from Lookup Table",
-                "tags": ["prompt", "lookups", "grammar"],
-                "type_hints": {
-                    "lookups": "string",
-                }
-            },
-        }
     
     @validator("lookups")
     def validate_lookups(cls, v):
@@ -197,10 +160,10 @@ class PromptFromLookupTableInvocation(BaseInvocation):
                 if "templates" in loaded:
                     valid = True
                     break
-        else:
-            if (not (v is None)) and ("templates" in json.loads(v)):
-                valid = True
-        if (not valid) and (not (v is None)):
+    #    else:
+    #        if (not (v is None)) and ("templates" in json.loads(v)):
+    #            valid = True
+        if (not valid) and (not (len(v) == 0)):
             raise ValueError("'templates' key must be present in lookup table(s)")
         return v
 
@@ -279,15 +242,15 @@ class PromptFromLookupTableInvocation(BaseInvocation):
 
     def invoke(self, context: InvocationContext) -> HalvedPromptOutput:
         lookups = {}
-        if isinstance(self.lookups, list):
-            for lookup_table in reversed(self.lookups):
-                lookup_table = json.loads(lookup_table)
-                for k, v in iter(lookup_table.items()):
-                    if k not in lookups:
-                        lookups[k] = []
-                    lookups[k].extend(v)
-        else:
-            lookups = json.loads(self.lookups)
+#        if isinstance(self.lookups, list):
+        for lookup_table in reversed(self.lookups):
+            lookup_table = json.loads(lookup_table)
+            for k, v in iter(lookup_table.items()):
+                if k not in lookups:
+                    lookups[k] = []
+                lookups[k].extend(v)
+#        else:
+#            lookups = json.loads(self.lookups)
         template_strings = lookups['templates']
         base_negatives = lookups['negatives'] if ('negatives' in lookups) else []
         result = None
