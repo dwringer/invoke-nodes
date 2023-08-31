@@ -1,36 +1,25 @@
 import math
 from typing import Literal
 
-from pydantic import Field
-
 from invokeai.app.invocations.baseinvocation import (
     BaseInvocation,
     BaseInvocationOutput,
     InvocationContext,
-    InvocationConfig,
+    InputField,
+    OutputField,
+    invocation,
+    invocation_output
 )
 
-
+@invocation_output("ideal_size_stepper_output")
 class IdealSizeStepperOutput(BaseInvocationOutput):
     """Class to encapsulate up to three pairs of int outputs corresponding to WxH image sizes"""
-
-    # fmt: off
-    type: Literal["ideal_size_stepper_output"] = "ideal_size_stepper_output"
-    width_a:             int = Field(description="The ideal width of the first intermediate image in pixels")
-    height_a:            int = Field(description="The ideal height of the first intermediate image in pixels")
-    width_b:             int = Field(description="The ideal width of the second intermediate image in pixels")
-    height_b:            int = Field(description="The ideal height of the second intermediate image in pixels")
-    width_c:             int = Field(description="The ideal width of the third intermediate image in pixels")
-    height_c:            int = Field(description="The ideal height of the third intermediate image in pixels")
-    
-    # fmt: on
-
-    class Config:
-        schema_extra = {
-            "required": [
-                "type", "width_a", "height_a", "width_b", "height_b", "width_c", "height_c"
-            ]
-        }
+    width_a:             int = OutputField(description="The ideal width of the first intermediate image in pixels")
+    height_a:            int = OutputField(description="The ideal height of the first intermediate image in pixels")
+    width_b:             int = OutputField(description="The ideal width of the second intermediate image in pixels")
+    height_b:            int = OutputField(description="The ideal height of the second intermediate image in pixels")
+    width_c:             int = OutputField(description="The ideal width of the third intermediate image in pixels")
+    height_c:            int = OutputField(description="The ideal height of the third intermediate image in pixels")
 
 TAPERS_IMPLEMENTED: list = [
     "Proportional (log area)",
@@ -45,38 +34,27 @@ TAPER_FIELDNAMES: list = [
     "<Taper C>",
 ]
         
-
+@invocation(
+    "ideal_size_stepper",
+    title="Ideal Size Stepper",
+    tags=["math", "size", "upscale"],
+#    category=
+)
 class IdealSizeStepperInvocation(BaseInvocation):
     """Calculates the ideal size for intermediate generations given full size and minimum size dimensions"""
-
-    # fmt: off
-    type: Literal["ideal_size_stepper"] = "ideal_size_stepper"
-
-    
-    # Inputs
-    full_width:  int = Field(default=None,  description="Full size width")
-    full_height: int = Field(default=None,  description="Full size height")
-    ideal_width:   int = Field(default=None,  description="Optimized size width")
-    ideal_height:  int = Field(default=None,  description="Optimized size height")
-    taper_a: Literal[tuple(TAPERS_IMPLEMENTED)] = Field(
+    full_width:  int = InputField(default=None,  description="Full size width")
+    full_height: int = InputField(default=None,  description="Full size height")
+    ideal_width:   int = InputField(default=None,  description="Optimized size width")
+    ideal_height:  int = InputField(default=None,  description="Optimized size height")
+    taper_a: Literal[tuple(TAPERS_IMPLEMENTED)] = InputField(
         default="Proportional (log area)", description="Taper used for scaling the intermediate dimensions"
     )
-    taper_b: Literal[tuple(["<Disabled>"] + TAPER_FIELDNAMES[:1] + TAPERS_IMPLEMENTED)] = Field(
+    taper_b: Literal[tuple(["<Disabled>"] + TAPER_FIELDNAMES[:1] + TAPERS_IMPLEMENTED)] = InputField(
         default="<Disabled>", description="If enabled, computes second intermediate stage (else, copies A outputs)"
     )
-    taper_c: Literal[tuple(["<Disabled>"] + TAPER_FIELDNAMES[:2] + TAPERS_IMPLEMENTED)] = Field(
+    taper_c: Literal[tuple(["<Disabled>"] + TAPER_FIELDNAMES[:2] + TAPERS_IMPLEMENTED)] = InputField(
         default="<Disabled>", description="If enabled, allocates 3 intermediate stages (else, copies B outputs)"
     )
-
-    # fmt: on
-    
-    class Config(InvocationConfig):
-        schema_extra = {
-            "ui": {
-                "title": "Ideal Size Stepper",
-                "tags": ["math", "size", "upscale"]
-            },
-        }
 
     def get_v(self, width, height, taper):
         v = None

@@ -1,62 +1,40 @@
 import random
 from typing import Literal
 
-from pydantic import Field
-
 from invokeai.app.invocations.baseinvocation import (
     BaseInvocation,
     BaseInvocationOutput,
     InvocationContext,
-    InvocationConfig
+    InputField,
+    OutputField,
+    invocation,
+    invocation_output
 )
 
+@invocation_output("random_switch_output")
 class RandomSwitchOutput(BaseInvocationOutput):
     """Class to encapsulate output of WxH from random switch node"""
-
-    # fmt: off
-    type: Literal["random_switch_output"] = "random_switch_output"
-    output_1: int = Field(description="The first output")
-    output_2: int = Field(description="The second output")
-
-    # fmt: on
-
-    class Config:
-        schema_extra = {"required": ["type", "output_1", "output_2"]}
+    output_1: int = OutputField(description="The first output")
+    output_2: int = OutputField(description="The second output")
 
 
+@invocation_output("final_size_output")
 class FinalSizeOutput(BaseInvocationOutput):
     """Class to encapsulate output of WxH from Final Size & Orientation node"""
-
-    # fmt: off
-    type: Literal["final_size_output"] = "final_size_output"
-    width: int = Field(description="The value assigned to width")
-    height: int = Field(description="The value assigned to height")
-
-    # fmt: on
-
-    class Config:
-        schema_extra = {"required": ["type", "width", "height"]}
+    width: int = OutputField(description="The value assigned to width")
+    height: int = OutputField(description="The value assigned to height")
 
 
+@invocation(
+    "random_switch",
+    title="Random Switch (Integers)",
+    tags=["random", "switch"],
+#   category=
+)
 class RandomSwitchInvocation(BaseInvocation):
     """Randomly switches its two outputs between the two inputs (integers)"""
-
-    # fmt: off
-    type: Literal["random_switch"] = "random_switch"
-
-    # Inputs
-    integer_a: int = Field(default=None, description="The first input")
-    integer_b: int = Field(default=None, description="The second input")
-
-    # fmt: on
-
-    class Config(InvocationConfig):
-        schema_extra = {
-            "ui": {
-                "title": "Random Switch (Integers)",
-                "tags": ["random", "switch"]
-            },
-        }
+    integer_a: int = InputField(default=None, description="The first input")
+    integer_b: int = InputField(default=None, description="The second input")
 
     def invoke(self, context:InvocationContext) -> RandomSwitchOutput:
         rand = random.random()
@@ -66,26 +44,18 @@ class RandomSwitchInvocation(BaseInvocation):
             )
 
 
+@invocation(
+    "final_size_and_orientation",
+    title="Final Size & Orientation",
+    tags=["random", "switch", "size", "orientation"],
+#   category=
+)
 class FinalSizeAndOrientationInvocation(BaseInvocation):
     """Input a pair of dimensions and choose portrait, landscape, or random orientation"""
-
-    # fmt: off
-    type: Literal["final_size_and_orientation"] = "final_size_and_orientation"
-
     # Inputs
-    dimension_a: int = Field(default=None, description="Size of the desired image resolution's first dimension")
-    dimension_b: int = Field(default=None, description="Size of the desired image resolution's second dimension")
-    orientation: Literal["random", "landscape", "portrait"] = Field(default="landscape", description="Desired orientation for the final image")
-
-    # fmt: on
-
-    class Config(InvocationConfig):
-        schema_extra = {
-            "ui": {
-                "title": "Final Size & Orientation",
-                "tags": ["random", "switch", "size", "orientation"]
-            },
-        }
+    dimension_a: int = InputField(default=None, description="Size of the desired image resolution's first dimension")
+    dimension_b: int = InputField(default=None, description="Size of the desired image resolution's second dimension")
+    orientation: Literal["random", "landscape", "portrait"] = InputField(default="landscape", description="Desired orientation for the final image")
 
     def invoke(self, context:InvocationContext) -> FinalSizeOutput:
         output_a, output_b = -1, -1
