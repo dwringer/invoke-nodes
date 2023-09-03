@@ -1,54 +1,47 @@
 from ast import literal_eval as tuple_from_string
 from functools import reduce
-from typing import Literal, Optional
 
 from PIL import Image, ImageOps, ImageChops, ImageDraw, ImageColor
-from pydantic import Field
 
-from invokeai.app.models.image import ImageCategory, ImageField, ResourceOrigin
+from invokeai.app.models.image import ImageCategory, ResourceOrigin
 from invokeai.app.invocations.baseinvocation import (
     BaseInvocation,
+    InputField,
+    invocation,
     InvocationContext,
-    InvocationConfig,
+    OutputField,
 )
 
-from invokeai.app.invocations.image import (
-    PILInvocationConfig,
+from invokeai.app.invocations.primitives import (
+    ImageField,
     ImageOutput
 )
 
 
-class ImageCompositorInvocation(BaseInvocation, PILInvocationConfig):
+@invocation(
+    "img_composite",
+    title="Image Compositor",
+    tags=["image", "compose", "chroma", "key"],
+    category="image",
+)
+class ImageCompositorInvocation(BaseInvocation):
     """Removes backdrop from subject image then overlays subject on background image"""
-    # fmt: off
-    type: Literal["img_composite"] = "img_composite"
-
-    # Inputs
-    image_subject:    Optional[ImageField] = Field(
+    image_subject:    ImageField = InputField(
         default=None, description="Image of the subject on a plain monochrome background"
     )
-    image_background: Optional[ImageField] = Field(
+    image_background: ImageField = InputField(
         default=None, description="Image of a background scene"
     )
-    chroma_key: str = Field(
+    chroma_key: str = InputField(
         default="", description="Can be empty for corner flood select, or CSS-3 color or tuple"
     )
-    threshold:  int = Field(
+    threshold:  int = InputField(
         default=50, description="Subject isolation flood-fill threshold"
     )
-    fill_x:    bool = Field(default=False, description="Scale base subject image to fit background width")
-    fill_y:    bool = Field(default=True,  description="Scale base subject image to fit background height")
-    x_offset:   int = Field(default=0, description="x-offset for the subject")
-    y_offset:   int = Field(default=0, description="y-offset for the subject")
-    # fmt: on
-
-    class Config(InvocationConfig):
-        schema_extra = {
-            "ui": {
-                "title": "Image Compositor",
-                "tags": ["image", "compose", "chroma", "key"]
-            },
-        }
+    fill_x:    bool = InputField(default=False, description="Scale base subject image to fit background width")
+    fill_y:    bool = InputField(default=True,  description="Scale base subject image to fit background height")
+    x_offset:   int = InputField(default=0, description="x-offset for the subject")
+    y_offset:   int = InputField(default=0, description="y-offset for the subject")
 
     def invoke(self, context: InvocationContext) -> ImageOutput:
         image_background = context.services.images.get_pil_image(self.image_background.image_name).convert(mode="RGBA")

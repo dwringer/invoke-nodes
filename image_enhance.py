@@ -1,43 +1,31 @@
-from typing import Literal, Optional
+from PIL import Image, ImageOps, ImageEnhance
 
-from PIL import Image, ImageOps, ImageEnhance, ImageDraw
-from pydantic import Field
-
-from invokeai.app.models.image import ImageCategory, ImageField, ResourceOrigin
+from invokeai.app.models.image import ImageCategory, ResourceOrigin
 from invokeai.app.invocations.baseinvocation import (
     BaseInvocation,
-    BaseInvocationOutput,
+    InputField,
+    invocation,
     InvocationContext,
-    InvocationConfig,
 )
-from invokeai.app.invocations.image import (
-    PILInvocationConfig,
+from invokeai.app.invocations.primitives import (
+    ImageField,
     ImageOutput
 )
 
-
-class ImageEnhanceInvocation(BaseInvocation, PILInvocationConfig):
+@invocation(
+    "img_enhance",
+    title="Enhance Image",
+    tags=["enhance", "image"],
+    category="image",
+)
+class ImageEnhanceInvocation(BaseInvocation):
     """Applies processing from PIL's ImageEnhance module."""
-
-    # fmt: off
-    type: Literal["img_enhance"] = "img_enhance"
-
-    # Inputs
-    image:      Optional[ImageField] = Field(default=None, description="The image for which to apply processing")
-    invert:     bool  = Field(default=False, description="Whether to invert the image colors")
-    color:      float = Field(default=1.0, description="Color enhancement factor")
-    contrast:   float = Field(default=1.0, description="Contrast enhancement factor")
-    brightness: float = Field(default=1.0, description="Brightness enhancement factor")
-    sharpness:  float = Field(default=1.0, description="Sharpness enhancement factor")
-    # fmt: on
-
-    class Config(InvocationConfig):
-        schema_extra = {
-            "ui": {
-                "title": "Enhance Image",
-                "tags": ["image", "enhance"]
-            },
-        }
+    image:      ImageField = InputField(default=None, description="The image for which to apply processing")
+    invert:     bool  = InputField(default=False, description="Whether to invert the image colors")
+    color:      float = InputField(default=1.0, description="Color enhancement factor")
+    contrast:   float = InputField(default=1.0, description="Contrast enhancement factor")
+    brightness: float = InputField(default=1.0, description="Brightness enhancement factor")
+    sharpness:  float = InputField(default=1.0, description="Sharpness enhancement factor")
 
     def invoke(self, context: InvocationContext) -> ImageOutput:
         image_out = context.services.images.get_pil_image(self.image.image_name)

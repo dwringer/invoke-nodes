@@ -1,52 +1,44 @@
 from io import BytesIO
-from typing import Literal
 
 import matplotlib
 matplotlib.use('AGG')
 import numpy
 from matplotlib.collections import PolyCollection
 from PIL import Image
-from pydantic import Field
 
-from invokeai.app.models.image import ImageCategory, ImageField, ResourceOrigin
+from invokeai.app.models.image import ImageCategory, ResourceOrigin
 from invokeai.app.invocations.baseinvocation import (
     BaseInvocation,
+    InputField,
+    invocation,
     InvocationContext,
-    InvocationConfig,
+    invocation_output,
 )
-from invokeai.app.invocations.image import (
-    PILInvocationConfig,
+from invokeai.app.invocations.primitives import (
+    ImageField,
     ImageOutput
 )
 
 
 # Implemented as per https://matplotlib.org/matplotblog/posts/custom-3d-engine/
 
-class DepthMapFromWavefrontObjInvocation(BaseInvocation, PILInvocationConfig):
+@invocation(
+    "depth_map_from_wavefront_obj",
+    title="Depth Map from Wavefront OBJ",
+    tags=["image", "depth", "wavefront", "obj"],
+    category="image",
+)
+class DepthMapFromWavefrontObjInvocation(BaseInvocation):
     """Renders a 3D depth map of a model described by a Wavefront .OBJ file"""
-
-    # fmt: off
-    type: Literal["depth_map_from_wavefront_obj"] = "depth_map_from_wavefront_obj"
-
-    # Inputs
-    width:  int = Field(default=512, description="Width of the desired depth map output")
-    height: int = Field(default=512, description="Height of the desired depth map output")
-    obj_file_path: str = Field(default="", description="Path to a valid Wavefront .OBJ 3D model file")
-    rotate_x: int = Field(default=20, description="Degrees by which to tip the model about the x-axis after y-rotation")
-    rotate_y: int = Field(default=45, description="Degrees by which to rotate the model's bearing about the y-axis")
-    translate_x: float = Field(default=0, description="Normal units to translate camera in the x-axis")
-    translate_y: float = Field(default=0, description="Normal units to translate camera in the y-axis")
-    translate_z: float = Field(default=-3.5, description="Normal units to translate camera in the z-axis")
-    fov: float = Field(default=25, description="FOV for the camera viewport (in degrees)")
-    # fmt: on
-
-    class Config(InvocationConfig):
-        schema_extra = {
-            "ui": {
-                "title": "Depth Map from Wavefront Obj",
-                "tags": ["image", "depth", "wavefront", "obj"]
-            },
-        }
+    width:  int = InputField(default=512, description="Width of the desired depth map output")
+    height: int = InputField(default=512, description="Height of the desired depth map output")
+    obj_file_path: str = InputField(default="", description="Path to a valid Wavefront .OBJ 3D model file")
+    rotate_x: int = InputField(default=20, description="Degrees by which to tip the model about the x-axis after y-rotation")
+    rotate_y: int = InputField(default=45, description="Degrees by which to rotate the model's bearing about the y-axis")
+    translate_x: float = InputField(default=0, description="Normal units to translate camera in the x-axis")
+    translate_y: float = InputField(default=0, description="Normal units to translate camera in the y-axis")
+    translate_z: float = InputField(default=-3.5, description="Normal units to translate camera in the z-axis")
+    fov: float = InputField(default=25, description="FOV for the camera viewport (in degrees)")
 
     def frustum(self, left, right, bottom, top, z_near, z_far):
         M = numpy.zeros((4, 4), dtype=numpy.float32)
