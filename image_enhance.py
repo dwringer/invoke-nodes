@@ -1,11 +1,16 @@
-from PIL import Image, ImageOps, ImageEnhance
+from typing import Literal, Optional
+
+from PIL import Image, ImageOps, ImageEnhance, ImageDraw
+from pydantic import Field
 
 from invokeai.app.models.image import ImageCategory, ResourceOrigin
 from invokeai.app.invocations.baseinvocation import (
     BaseInvocation,
-    InputField,
+    BaseInvocationOutput,
     invocation,
+    invocation_output,
     InvocationContext,
+    InputField,
 )
 from invokeai.app.invocations.primitives import (
     ImageField,
