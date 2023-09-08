@@ -49,17 +49,11 @@ class MaskedBlendLatentsInvocation(BaseInvocation):
 
     def replace_tensor_from_masked_tensor(self, tensor, other_tensor, mask_tensor):
         output = tensor.clone()
-        for i in range(0, tensor.shape[1]):
-            if output.dtype != torch.float16:
-                output[0,i,:,:] = torch.add(
-                    output[0,i,:,:],
-                    mask_tensor[0,0,:,:] * torch.sub(other_tensor[0,i,:,:], tensor[0,i,:,:])
-                )
-            else:
-                output[0,i,:,:] = torch.add(
-                    output[0,i,:,:],
-                    mask_tensor[0,0,:,:].half() * torch.sub(other_tensor[0,i,:,:], tensor[0,i,:,:])
-                )
+        mask_tensor = mask_tensor.expand(output.shape)
+        if output.dtype != torch.float16:
+            output = torch.add(output, mask_tensor * torch.sub(other_tensor, tensor))
+        else:
+            output = torch.add(output, mask_tensor.half() * torch.sub(other_tensor, tensor))
         return output
 
     def invoke(self, context: InvocationContext) -> LatentsOutput:
