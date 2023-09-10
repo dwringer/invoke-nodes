@@ -28,6 +28,8 @@ MASK_TYPES: list = [
     "midtones"
 ]
 
+CIELAB_CHANNELS: list = ["L", "A", "B"]
+
 
 @invocation_output("shmmask_output")
 class ShadowsHighlightsMidtonesMasksOutput(BaseInvocationOutput):
@@ -36,6 +38,41 @@ class ShadowsHighlightsMidtonesMasksOutput(BaseInvocationOutput):
     shadows_mask: ImageField = OutputField(default=None, description="Soft-edged shadows mask")
     width: int = OutputField(description="Width of the input/outputs")
     height: int = OutputField(description="Height of the input/outputs")
+
+
+@invocation(
+    "lab_channel",
+    title="Extract CIELAB Channel",
+    tags=["image", "channel", "mask", "cielab", "lab"],
+    category="image"
+)
+class ExtractCIELABChannelInvocation(BaseInvocation):
+    """Get a selected channel from L*a*b* color space"""
+
+    image: ImageField = InputField(description="Image from which to get channel")
+    channel: Literal[tuple(CIELAB_CHANNELS)] = InputField(default=CIELAB_CHANNELS[0], description="Channel to extract")
+
+    def invoke(self, context: InvocationContext) -> ImageOutput:
+        image_in = context.services.images.get_pil_image(self.image.image_name)
+
+        image_out = image_in.convert("LAB")
+        image_out = image_out.getchannel(self.channel)
+        
+#        image_out = pil_image_from_tensor(self.get_shadows_mask(image_tensor), mode="L")
+        image_dto = context.services.images.create(
+            image=image_out,
+            image_origin=ResourceOrigin.INTERNAL,
+            image_category=ImageCategory.GENERAL,
+            node_id=self.id,
+            session_id=context.graph_execution_state_id,
+            is_intermediate=self.is_intermediate
+        )
+        return ImageOutput(
+            image=ImageField(image_name=image_dto.image_name),
+            width=image_dto.width,
+            height=image_dto.height
+        )
+        
 
     
 @invocation(
@@ -119,18 +156,20 @@ class ShadowsHighlightsMidtonesMaskInvocation(BaseInvocation):
         mask_bottom_hi = torch.ge(img_tensor, s_threshold_hard)
         mask_bottom_lo = torch.lt(img_tensor, s_threshold_soft)
         mask_bottom = torch.logical_and(mask_bottom_hi, mask_bottom_lo)
-        
-        vmax_top, vmin_top = img_tensor[mask_top].max(), img_tensor[mask_top].min()
-        if (vmax_top == vmin_top):
-            img_tensor[mask_top] = 0.5 * ones_tensor
-        else:
-            img_tensor[mask_top] = (img_tensor[mask_top] - vmin_top) / (vmax_top - vmin_top) # hi is 1
+
+        if not (h_threshold_hard == h_threshold_soft):
+            vmax_top, vmin_top = img_tensor[mask_top].max(), img_tensor[mask_top].min()
+            if (vmax_top == vmin_top):
+                img_tensor[mask_top] = 0.5 * ones_tensor
+            else:
+                img_tensor[mask_top] = (img_tensor[mask_top] - vmin_top) / (vmax_top - vmin_top) # hi is 1
             
-        vmax_bottom, vmin_bottom = img_tensor[mask_bottom].max(), img_tensor[mask_bottom].min()
-        if (vmax_bottom == vmin_bottom):
-            img_tensor[mask_bottom] = 0.5 * ones_tensor
-        else:
-            img_tensor[mask_bottom] = torch.sub(1.0, (img_tensor[mask_bottom] - vmin_bottom) / (vmax_bottom - vmin_bottom)) # lo is 1
+        if not (s_threshold_hard == s_threshold_soft):
+            vmax_bottom, vmin_bottom = img_tensor[mask_bottom].max(), img_tensor[mask_bottom].min()
+            if (vmax_bottom == vmin_bottom):
+                img_tensor[mask_bottom] = 0.5 * ones_tensor
+            else:
+                img_tensor[mask_bottom] = torch.sub(1.0, (img_tensor[mask_bottom] - vmin_bottom) / (vmax_bottom - vmin_bottom)) # lo is 1
 
         img_tensor[mid_mask] = zeros_tensor[mid_mask]
         img_tensor[highlight_ones_mask] = ones_tensor[highlight_ones_mask]
