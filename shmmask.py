@@ -58,7 +58,6 @@ class ExtractCIELABChannelInvocation(BaseInvocation):
         image_out = image_in.convert("LAB")
         image_out = image_out.getchannel(self.channel)
         
-#        image_out = pil_image_from_tensor(self.get_shadows_mask(image_tensor), mode="L")
         image_dto = context.services.images.create(
             image=image_out,
             image_origin=ResourceOrigin.INTERNAL,
@@ -102,11 +101,13 @@ class ShadowsHighlightsMidtonesMaskInvocation(BaseInvocation):
             mask_hi = torch.ge(img_tensor, threshold_s)
             mask_lo = torch.lt(img_tensor, threshold_h)
             mask = torch.logical_and(mask_hi, mask_lo)
-            vmax, vmin = img_tensor[mask].max(), img_tensor[mask].min()
-            if (vmax == vmin):
-                img_tensor[mask] = 0.5 * ones_tensor
-            else:
-                img_tensor[mask] = torch.sub(1.0, (img_tensor[mask] - vmin) / (vmax - vmin)) # hi is 0
+            masked = img_tensor[mask]
+            if 0 < masked.numel():
+              vmax, vmin = masked.max(), masked.min()
+              if (vmax == vmin):
+                  img_tensor[mask] = 0.5 * ones_tensor
+              else:
+                  img_tensor[mask] = torch.sub(1.0, (img_tensor[mask] - vmin) / (vmax - vmin)) # hi is 0
 
         img_tensor[ones_mask] = ones_tensor[ones_mask]
         img_tensor[zeros_mask] = zeros_tensor[zeros_mask]
@@ -126,11 +127,13 @@ class ShadowsHighlightsMidtonesMaskInvocation(BaseInvocation):
             mask_hi = torch.le(img_tensor, threshold_s)
             mask_lo = torch.gt(img_tensor, threshold_h)
             mask = torch.logical_and(mask_hi, mask_lo)
-            vmax, vmin = img_tensor[mask].max(), img_tensor[mask].min()
-            if (vmax == vmin):
-                img_tensor[mask] = 0.5 * ones_tensor
-            else:
-                img_tensor[mask] = (img_tensor[mask] - vmin) / (vmax - vmin) # lo is 0
+            masked = img_tensor[mask]
+            if 0 < masked.numel():
+                vmax, vmin = masked.max(), masked.min()
+                if (vmax == vmin):
+                    img_tensor[mask] = 0.5 * ones_tensor
+                else:
+                    img_tensor[mask] = (img_tensor[mask] - vmin) / (vmax - vmin) # lo is 0
 
         img_tensor[ones_mask] = ones_tensor[ones_mask]
         img_tensor[zeros_mask] = zeros_tensor[zeros_mask]
@@ -158,18 +161,22 @@ class ShadowsHighlightsMidtonesMaskInvocation(BaseInvocation):
         mask_bottom = torch.logical_and(mask_bottom_hi, mask_bottom_lo)
 
         if not (h_threshold_hard == h_threshold_soft):
-            vmax_top, vmin_top = img_tensor[mask_top].max(), img_tensor[mask_top].min()
-            if (vmax_top == vmin_top):
-                img_tensor[mask_top] = 0.5 * ones_tensor
-            else:
-                img_tensor[mask_top] = (img_tensor[mask_top] - vmin_top) / (vmax_top - vmin_top) # hi is 1
+            masked = img_tensor[mask_top]
+            if 0 < masked.numel():
+                vmax_top, vmin_top = masked.max(), masked.min()
+                if (vmax_top == vmin_top):
+                    img_tensor[mask_top] = 0.5 * ones_tensor
+                else:
+                    img_tensor[mask_top] = (img_tensor[mask_top] - vmin_top) / (vmax_top - vmin_top) # hi is 1
             
         if not (s_threshold_hard == s_threshold_soft):
-            vmax_bottom, vmin_bottom = img_tensor[mask_bottom].max(), img_tensor[mask_bottom].min()
-            if (vmax_bottom == vmin_bottom):
-                img_tensor[mask_bottom] = 0.5 * ones_tensor
-            else:
-                img_tensor[mask_bottom] = torch.sub(1.0, (img_tensor[mask_bottom] - vmin_bottom) / (vmax_bottom - vmin_bottom)) # lo is 1
+            masked = img_tensor[mask_bottom]
+            if 0 < masked.numel():
+                vmax_bottom, vmin_bottom = masked.max(), masked.min()
+                if (vmax_bottom == vmin_bottom):
+                    img_tensor[mask_bottom] = 0.5 * ones_tensor
+                else:
+                    img_tensor[mask_bottom] = torch.sub(1.0, (img_tensor[mask_bottom] - vmin_bottom) / (vmax_bottom - vmin_bottom)) # lo is 1
 
         img_tensor[mid_mask] = zeros_tensor[mid_mask]
         img_tensor[highlight_ones_mask] = ones_tensor[highlight_ones_mask]
