@@ -29,7 +29,8 @@ class FinalSizeOutput(BaseInvocationOutput):
     "random_switch",
     title="Random Switch (Integers)",
     tags=["random", "switch"],
-#   category=
+    category="math",
+    version="1.0.0",
 )
 class RandomSwitchInvocation(BaseInvocation):
     """Randomly switches its two outputs between the two inputs (integers)"""
@@ -48,7 +49,8 @@ class RandomSwitchInvocation(BaseInvocation):
     "final_size_and_orientation",
     title="Final Size & Orientation",
     tags=["random", "switch", "size", "orientation"],
-#   category=
+    category="math",
+    version="1.0.0",
 )
 class FinalSizeAndOrientationInvocation(BaseInvocation):
     """Input a pair of dimensions and choose portrait, landscape, or random orientation"""

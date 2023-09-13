@@ -38,7 +38,8 @@ TAPER_FIELDNAMES: list = [
     "ideal_size_stepper",
     title="Ideal Size Stepper",
     tags=["math", "size", "upscale"],
-#    category=
+    category="math",
+    version="1.0.0",
 )
 class IdealSizeStepperInvocation(BaseInvocation):
     """Calculates the ideal size for intermediate generations given full size and minimum size dimensions"""

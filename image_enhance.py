@@ -22,6 +22,7 @@ from invokeai.app.invocations.primitives import (
     title="Enhance Image",
     tags=["enhance", "image"],
     category="image",
+    version="1.0.0",    
 )
 class ImageEnhanceInvocation(BaseInvocation):
     """Applies processing from PIL's ImageEnhance module."""
