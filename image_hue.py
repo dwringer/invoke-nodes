@@ -2,115 +2,108 @@
 # Parts based on Oklab: Copyright (c) 2021 Björn Ottosson <https://bottosson.github.io/>
 
 import os.path
-from math import sqrt, pi as PI
+from math import pi as PI
 from typing import Literal
 
-import numpy
 import PIL.Image
 import torch
 from torchvision.transforms.functional import to_pil_image as pil_image_from_tensor
 
-from invokeai.app.models.image import ImageCategory, ResourceOrigin
-from invokeai.app.invocations.primitives import (
-    ImageField,
-    ImageOutput,
-)
-
-from invokeai.backend.stable_diffusion.diffusers_pipeline import (
-    image_resized_to_grid_as_tensor,
-)
 from invokeai.app.invocations.baseinvocation import (
     BaseInvocation,
     InputField,
     InvocationContext,
     invocation,
 )
+from invokeai.app.invocations.primitives import (
+    ImageField,
+    ImageOutput,
+)
+from invokeai.app.models.image import ImageCategory, ResourceOrigin
+from invokeai.backend.stable_diffusion.diffusers_pipeline import (
+    image_resized_to_grid_as_tensor,
+)
+
+
+def tensor_from_pil_image(img, normalize=True):
+    return image_resized_to_grid_as_tensor(img, normalize=normalize, multiple_of=1)
 
 
 MAX_FLOAT = torch.finfo(torch.tensor(1.).dtype).max
 
-
-def srgb_from_linear_srgb(linear_srgb_tensor, alpha=0.05, steps=1):
-    if 0 < alpha:
-        linear_srgb_tensor = gamut_clip_tensor(linear_srgb_tensor, alpha=alpha, steps=steps)
-    linear_srgb_tensor = linear_srgb_tensor.clamp(0., 1.)
-    mask = torch.lt(linear_srgb_tensor, 0.0404482362771082 / 12.92)
-    rgb_tensor = torch.sub(torch.mul(torch.pow(linear_srgb_tensor, (1/2.4)), 1.055), 0.055)
-    rgb_tensor[mask] = torch.mul(linear_srgb_tensor[mask], 12.92)
-
-    return rgb_tensor
-    
-
-def linear_srgb_from_srgb(srgb_tensor):
-    linear_srgb_tensor = torch.pow(torch.div(torch.add(srgb_tensor, 0.055), 1.055), 2.4)
-    linear_srgb_tensor_1 = torch.div(srgb_tensor, 12.92)
-    mask = torch.le(srgb_tensor, 0.0404482362771082)
-    linear_srgb_tensor[mask] = linear_srgb_tensor_1[mask]
-
-    return linear_srgb_tensor
-
 COLOR_SPACES = [
-    # "Okhsl",  # Not yet implemented
+    "HSV / HSL / RGB",
+    "Okhsl",
     "Okhsv",
-    "HSV",
-    "Oklab",
-    "CIELAB",
-    "UPLab (w/CIELab_to_UPLab.icc)",
+    "*Oklch / Oklab",
+    "*LCh / CIELab",
+    "*UPLab (w/CIELab_to_UPLab.icc)",
 ]
+
 
 @invocation(
     "img_hue_adjust_plus",
     title="Adjust Image Hue Plus",
     tags=["image", "hue", "oklab", "cielab", "uplab", "lch", "hsv", "hsl", "lab"],
     category="image",
-    version="1.0.0",
+    version="1.0.1",
 )
 class AdjustImageHuePlusInvocation(BaseInvocation):
     """Adjusts the Hue of an image by rotating it in the selected color space"""
 
     image: ImageField = InputField(description="The image to adjust")
     space: Literal[tuple(COLOR_SPACES)] = InputField(
-        default=COLOR_SPACES[0], description="Color space in which to rotate hue by polar coords."
+        default=COLOR_SPACES[1],
+        description="Color space in which to rotate hue by polar coords (*: non-invertible)"
     )
     degrees: float = InputField(default=0.0, description="Degrees by which to rotate image hue")
+    preserve_lightness: bool = InputField(
+        default=False, description="Whether to preserve CIELAB lightness values"
+    )
     ok_adaptive_gamut: float = InputField(
-        default=0.5, description="Lower preserves lightness at the expense of chroma (Oklab/Okhsv)"
+        default=0.5, description="Lower preserves lightness at the expense of chroma (Oklab)"
     )
     ok_high_precision: bool = InputField(
-        default=True, description="Use more steps in computing gamut (Oklab/Okhsv)"
+        default=True, description="Use more steps in computing gamut (Oklab/Okhsv/Okhsl)"
     )
 
     def invoke(self, context: InvocationContext) -> ImageOutput:
         image_in = context.services.images.get_pil_image(self.image.image_name)
         image_out = None
+        space = self.space.split()[0].lower().strip('*')
+
+        # Keep the mode and alpha channel for restoration after shifting the hue:
         image_mode = image_in.mode
+        original_mode = image_mode
+        alpha_channel = None
+        if (image_mode == "RGBA") or (image_mode == "LA") or (image_mode == "PA"):
+            alpha_channel = image_in.getchannel("A")
+        elif (image_mode == "RGBa") or (image_mode == "La") or (image_mode == "Pa"):
+            alpha_channel = image_in.getchannel("a")
+        if (image_mode == "RGBA") or (image_mode == "RGBa"):
+            image_mode = "RGB"
+        elif (image_mode == "LA") or (image_mode == "La"):
+            image_mode = "L"
+        elif image_mode == "PA":
+            image_mode = "P"
+
         image_in = image_in.convert("RGB")
 
-        space = self.space.split()[0].lower()
-        if space == "hsv":
-            hsv_tensor = image_resized_to_grid_as_tensor(image_in.convert('HSV'), normalize=False)  # 0..1 vals
-            hsv_tensor[0,:,:] = torch.remainder(torch.add(hsv_tensor[0,:,:], torch.div(self.degrees, 360.)), 1.)
-            image_out = pil_image_from_tensor(hsv_tensor, mode="HSV")
-            
-        elif space == "okhsv":
-            rgb_tensor = image_resized_to_grid_as_tensor(image_in.convert("RGB"), normalize=False)  # 0..1 vals
-
-            hsv_tensor = okhsv_from_srgb(rgb_tensor, steps=(3 if self.ok_high_precision else 1))
-
-            h_tensor = hsv_tensor[0,:,:]
-
-            h_rot = torch.remainder(torch.add(h_tensor, torch.div(self.degrees, 360.)), 1.)
-
-            hsv_tensor[0,:,:] = h_rot
-
-            rgb_tensor = srgb_from_okhsv(hsv_tensor, alpha=(0.05 if self.ok_high_precision else 0.0))
-
-            image_out = pil_image_from_tensor(rgb_tensor, mode="RGB")
-
-        elif (space == "cielab") or (space == "uplab"):
+        # Keep the CIELAB L* lightness channel for restoration if Preserve Lightness is selected:
+        (
+            channel_l,
+            channel_a,
+            channel_b,
+            profile_srgb,
+            profile_lab,
+            profile_uplab,
+            lab_transform,
+            uplab_transform
+        ) = (
+            None, None, None, None, None, None, None, None
+        )
+        if self.preserve_lightness or (space == "lch") or (space == "uplab"):
             profile_srgb = PIL.ImageCms.createProfile("sRGB")
-            profile_lab = None
-            profile_uplab = None
             if space == "uplab":
                 if os.path.isfile("CIELab_to_UPLab.icc"):
                     profile_uplab = PIL.ImageCms.getOpenProfile("CIELab_to_UPLab.icc")
@@ -125,7 +118,7 @@ class AdjustImageHuePlusInvocation(BaseInvocation):
             image_out = PIL.ImageCms.applyTransform(image_in, lab_transform)
             if not (profile_uplab is None):
               uplab_transform = PIL.ImageCms.buildTransformFromOpenProfiles(
-                  profile_lab, profile_uplab, "LAB", "LAB", flags=0x2400
+                  profile_lab, profile_uplab, "LAB", "LAB", renderingIntent=2, flags=0x2400
               )
               image_out = PIL.ImageCms.applyTransform(image_out, uplab_transform)
 
@@ -133,9 +126,33 @@ class AdjustImageHuePlusInvocation(BaseInvocation):
             channel_a = image_out.getchannel("A")
             channel_b = image_out.getchannel("B")
 
-            l_tensor = image_resized_to_grid_as_tensor(channel_l, normalize=False)
-            a_tensor = image_resized_to_grid_as_tensor(channel_a, normalize=True)
-            b_tensor = image_resized_to_grid_as_tensor(channel_b, normalize=True)
+        if space == "hsv":
+            hsv_tensor = tensor_from_pil_image(image_in.convert('HSV'), normalize=False)
+            hsv_tensor[0,:,:] = torch.remainder(torch.add(hsv_tensor[0,:,:],
+                                                          torch.div(self.degrees, 360.)), 1.)
+            image_out = pil_image_from_tensor(hsv_tensor, mode="HSV").convert("RGB")
+            
+        elif space == "okhsl":
+            rgb_tensor = tensor_from_pil_image(image_in.convert("RGB"), normalize=False)
+            hsl_tensor = okhsl_from_srgb(rgb_tensor, steps=(3 if self.ok_high_precision else 1))
+            hsl_tensor[0,:,:] = torch.remainder(torch.add(hsl_tensor[0,:,:],
+                                                          torch.div(self.degrees, 360.)), 1.)
+            rgb_tensor = srgb_from_okhsl(hsl_tensor, alpha=(0.05 if self.ok_high_precision else 0.0))
+            image_out = pil_image_from_tensor(rgb_tensor, mode="RGB")
+
+        elif space == "okhsv":
+            rgb_tensor = tensor_from_pil_image(image_in.convert("RGB"), normalize=False)
+            hsv_tensor = okhsv_from_srgb(rgb_tensor, steps=(3 if self.ok_high_precision else 1))
+            hsv_tensor[0,:,:] = torch.remainder(torch.add(hsv_tensor[0,:,:],
+                                                          torch.div(self.degrees, 360.)), 1.)
+            rgb_tensor = srgb_from_okhsv(hsv_tensor, alpha=(0.05 if self.ok_high_precision else 0.0))
+            image_out = pil_image_from_tensor(rgb_tensor, mode="RGB")
+
+        elif (space == "lch") or (space == "uplab"):
+            # <Channels a and b were already extracted, above.>
+            
+            a_tensor = tensor_from_pil_image(channel_a, normalize=True)
+            b_tensor = tensor_from_pil_image(channel_b, normalize=True)
 
             # L*a*b* to L*C*h
             c_tensor = torch.sqrt(torch.add(torch.pow(a_tensor, 2.0), torch.pow(b_tensor, 2.0)))
@@ -155,15 +172,14 @@ class AdjustImageHuePlusInvocation(BaseInvocation):
             a_tensor = torch.div(torch.add(a_tensor, 1.0), 2.0)
             b_tensor = torch.div(torch.add(b_tensor, 1.0), 2.0)
 
-            l_img = pil_image_from_tensor(l_tensor)
             a_img = pil_image_from_tensor(a_tensor)
             b_img = pil_image_from_tensor(b_tensor)
 
-            image_out = PIL.Image.merge("LAB", (l_img, a_img, b_img))
+            image_out = PIL.Image.merge("LAB", (channel_l, a_img, b_img))
 
             if not (profile_uplab is None):
                 deuplab_transform = PIL.ImageCms.buildTransformFromOpenProfiles(
-                    profile_uplab, profile_lab, "LAB", "LAB", flags=0x2400
+                    profile_uplab, profile_lab, "LAB", "LAB", renderingIntent=2, flags=0x2400
                 )
                 image_out = PIL.ImageCms.applyTransform(image_out, deuplab_transform)
 
@@ -172,8 +188,8 @@ class AdjustImageHuePlusInvocation(BaseInvocation):
             )
             image_out = PIL.ImageCms.applyTransform(image_out, rgb_transform)
 
-        elif space == "oklab":
-            rgb_tensor = image_resized_to_grid_as_tensor(image_in.convert("RGB"), normalize=False)  # 0..1 values
+        elif space == "oklch":
+            rgb_tensor = tensor_from_pil_image(image_in.convert("RGB"), normalize=False)
 
             linear_srgb_tensor = linear_srgb_from_srgb(rgb_tensor)
 
@@ -197,12 +213,58 @@ class AdjustImageHuePlusInvocation(BaseInvocation):
             linear_srgb_tensor = linear_srgb_from_oklab(lab_tensor)
 
             rgb_tensor = srgb_from_linear_srgb(
-                linear_srgb_tensor, alpha=self.ok_adaptive_gamut, steps=(3 if self.ok_high_precision else 1)
+                linear_srgb_tensor,
+                alpha=self.ok_adaptive_gamut,
+                steps=(3 if self.ok_high_precision else 1)
             )
         
             image_out = pil_image_from_tensor(rgb_tensor, mode="RGB")
 
+        # Not all modes can convert directly to LAB using pillow:
+        # image_out = image_out.convert("RGB")
+
+        # Restore the L* channel if required:
+        if self.preserve_lightness and (not ((space == "lch") or (space == "uplab"))):
+            if profile_uplab is None:
+                profile_lab = PIL.ImageCms.createProfile("LAB", colorTemp=6500)
+            else:
+                profile_lab = PIL.ImageCms.createProfile("LAB", colorTemp=5000)
+
+            lab_transform = PIL.ImageCms.buildTransformFromOpenProfiles(
+                profile_srgb, profile_lab, "RGB", "LAB", renderingIntent=2, flags=0x2400
+            )
+
+            image_out = PIL.ImageCms.applyTransform(image_out, lab_transform)
+
+            if not (profile_uplab is None):
+              uplab_transform = PIL.ImageCms.buildTransformFromOpenProfiles(
+                  profile_lab, profile_uplab, "LAB", "LAB", renderingIntent=2, flags=0x2400
+              )
+              image_out = PIL.ImageCms.applyTransform(image_out, uplab_transform)
+
+            image_out = PIL.Image.merge(
+                "LAB",
+                tuple([channel_l] + [image_out.getchannel(c) for c in "AB"])
+            )
+
+            if not (profile_uplab is None):
+                deuplab_transform = PIL.ImageCms.buildTransformFromOpenProfiles(
+                    profile_uplab, profile_lab, "LAB", "LAB", renderingIntent=2, flags=0x2400
+                )
+                image_out = PIL.ImageCms.applyTransform(image_out, deuplab_transform)
+
+            rgb_transform = PIL.ImageCms.buildTransformFromOpenProfiles(
+                profile_lab, profile_srgb, "LAB", "RGB", renderingIntent=2, flags=0x2400
+            )
+            image_out = PIL.ImageCms.applyTransform(image_out, rgb_transform)
+
+        # Restore the original image mode, with alpha channel if required:
         image_out = image_out.convert(image_mode)
+        if "a" in original_mode.lower():
+            image_out = PIL.Image.merge(
+                original_mode,
+                tuple([image_out.getchannel(c) for c in image_mode] + [alpha_channel])
+            )
 
         image_dto = context.services.images.create(
             image=image_out,
@@ -217,6 +279,26 @@ class AdjustImageHuePlusInvocation(BaseInvocation):
             width=image_dto.width,
             height=image_dto.height
         )
+
+
+def srgb_from_linear_srgb(linear_srgb_tensor, alpha=0.05, steps=1):
+    if 0 < alpha:
+        linear_srgb_tensor = gamut_clip_tensor(linear_srgb_tensor, alpha=alpha, steps=steps)
+    linear_srgb_tensor = linear_srgb_tensor.clamp(0., 1.)
+    mask = torch.lt(linear_srgb_tensor, 0.0404482362771082 / 12.92)
+    rgb_tensor = torch.sub(torch.mul(torch.pow(linear_srgb_tensor, (1/2.4)), 1.055), 0.055)
+    rgb_tensor[mask] = torch.mul(linear_srgb_tensor[mask], 12.92)
+
+    return rgb_tensor
+    
+
+def linear_srgb_from_srgb(srgb_tensor):
+    linear_srgb_tensor = torch.pow(torch.div(torch.add(srgb_tensor, 0.055), 1.055), 2.4)
+    linear_srgb_tensor_1 = torch.div(srgb_tensor, 12.92)
+    mask = torch.le(srgb_tensor, 0.0404482362771082)
+    linear_srgb_tensor[mask] = linear_srgb_tensor_1[mask]
+
+    return linear_srgb_tensor
 
 
 def max_srgb_saturation_tensor(units_ab_tensor, steps=1):
@@ -343,8 +425,17 @@ def find_cusp_tensor(units_ab_tensor, steps=1):
     return torch.stack([l_cusp_tensor, c_cusp_tensor])
 
 
-def find_gamut_intersection_tensor(units_ab_tensor, l_1_tensor, c_1_tensor, l_0_tensor, steps=1, steps_outer=1):
-    lc_cusps_tensor = find_cusp_tensor(units_ab_tensor, steps=steps)
+def find_gamut_intersection_tensor(
+        units_ab_tensor,
+        l_1_tensor,
+        c_1_tensor,
+        l_0_tensor,
+        steps=1,
+        steps_outer=1,
+        lc_cusps_tensor=None
+):
+    if lc_cusps_tensor is None:
+        lc_cusps_tensor = find_cusp_tensor(units_ab_tensor, steps=steps)
 
     # if (((l_1 - l_0) * c_cusp -
     #      (l_cusp - l_0) * c_1) <= 0.):
@@ -423,7 +514,9 @@ def find_gamut_intersection_tensor(units_ab_tensor, l_1_tensor, c_1_tensor, l_0_
 def gamut_clip_tensor(rgb_tensor, alpha=0.05, steps=1, steps_outer=1):
     lab_tensor = oklab_from_linear_srgb(rgb_tensor)
     epsilon = 0.00001
-    chroma_tensor = torch.sqrt(torch.add(torch.pow(lab_tensor[1,:,:], 2.), torch.pow(lab_tensor[2,:,:], 2.)))
+    chroma_tensor = torch.sqrt(
+        torch.add(torch.pow(lab_tensor[1,:,:], 2.), torch.pow(lab_tensor[2,:,:], 2.))
+    )
     chroma_tensor = torch.where(torch.lt(chroma_tensor, epsilon), epsilon, chroma_tensor)
     
     units_ab_tensor = torch.div(lab_tensor[1:,:,:], chroma_tensor)
@@ -439,7 +532,12 @@ def gamut_clip_tensor(rgb_tensor, alpha=0.05, steps=1, steps_outer=1):
         0.5)
 
     t_tensor = find_gamut_intersection_tensor(
-        units_ab_tensor, lab_tensor[0,:,:], chroma_tensor, l_0_tensor, steps=steps, steps_outer=steps_outer
+        units_ab_tensor,
+        lab_tensor[0,:,:],
+        chroma_tensor,
+        l_0_tensor,
+        steps=steps,
+        steps_outer=steps_outer
     )
     l_clipped_tensor = torch.add(torch.mul(l_0_tensor, torch.add(torch.mul(t_tensor, -1), 1.)),
                                  torch.mul(t_tensor, lab_tensor[0,:,:]))
@@ -632,3 +730,269 @@ def okhsv_from_srgb(srgb_tensor, steps=1):
                                    torch.mul(st_max_tensor[1,:,:], torch.mul(k_tensor, c_v_tensor))))
 
     return torch.stack([h_tensor, s_tensor, v_tensor])
+
+
+def get_st_mid_tensor(units_ab_tensor):
+    return torch.stack(
+        [
+            torch.add(
+                torch.div(
+                    1.,
+                    torch.add(
+                        torch.add(
+                            torch.mul(units_ab_tensor[1,:,:], 4.15901240),
+                            torch.mul(
+                                units_ab_tensor[0,:,:],
+                                torch.add(
+                                    torch.add(
+                                        torch.mul(units_ab_tensor[1,:,:], 1.75198401),
+                                        torch.mul(
+                                            units_ab_tensor[0,:,:],
+                                            torch.add(
+                                                torch.add(
+                                                    torch.mul(units_ab_tensor[1,:,:], -10.02301043),
+                                                    torch.mul(
+                                                        units_ab_tensor[0,:,:],
+                                                        torch.add(
+                                                            torch.add(
+                                                                torch.mul(units_ab_tensor[1,:,:], 5.38770819),
+                                                                torch.mul(units_ab_tensor[0,:,:], 4.69891013)
+                                                            ),
+                                                            -4.24894561
+                                                        )
+                                                    )
+                                                ),
+                                                -2.13704948
+                                            )
+                                        )
+                                    ),
+                                    -2.19557347
+                                )
+                            )
+                        ),
+                        7.44778970
+                    )
+                ),
+                0.11516993
+            ),
+            torch.add(
+                torch.div(
+                    1.,
+                    torch.add(
+                        torch.add(
+                            torch.mul(units_ab_tensor[1,:,:], -0.68124379),
+                            torch.mul(
+                                units_ab_tensor[0,:,:],
+                                torch.add(
+                                    torch.add(
+                                        torch.mul(units_ab_tensor[1,:,:], 0.90148123),
+                                        torch.mul(
+                                            units_ab_tensor[0,:,:],
+                                            torch.add(
+                                                torch.add(
+                                                    torch.mul(units_ab_tensor[1,:,:], 0.61223990),
+                                                    torch.mul(
+                                                        units_ab_tensor[0,:,:],
+                                                        torch.add(
+                                                            torch.add(
+                                                                torch.mul(units_ab_tensor[1,:,:], -0.45399568),
+                                                                torch.mul(units_ab_tensor[0,:,:], -0.14661872)
+                                                            ),
+                                                            0.00299215
+                                                        )
+                                                    )
+                                                ),
+                                                -0.27087943
+                                            )
+                                        )
+                                    ),
+                                    0.40370612
+                                )
+                            )
+                        ),
+                        1.61320320
+                    )
+                ),
+                0.11239642
+            )
+        ]
+    )
+
+
+def get_cs_tensor(l_tensor, units_ab_tensor, steps=1, steps_outer=1):  # -> [C_0, C_mid, C_max]
+    lc_cusps_tensor = find_cusp_tensor(units_ab_tensor, steps=steps)
+
+    c_max_tensor = find_gamut_intersection_tensor(
+        units_ab_tensor,
+        l_tensor,
+        torch.ones(l_tensor.shape),
+        l_tensor,
+        lc_cusps_tensor=lc_cusps_tensor,
+        steps=steps,
+        steps_outer=steps_outer
+    )
+    st_max_tensor = st_cusps_from_lc(lc_cusps_tensor)
+    
+    k_tensor = torch.div(c_max_tensor,
+                         torch.min(torch.mul(l_tensor, st_max_tensor[0,:,:]),
+                                   torch.mul(torch.add(torch.mul(l_tensor, -1.), 1.),
+                                             st_max_tensor[1,:,:])))
+
+    st_mid_tensor = get_st_mid_tensor(units_ab_tensor)
+    c_a_tensor = torch.mul(l_tensor, st_mid_tensor[0,:,:])
+    c_b_tensor = torch.mul(torch.add(torch.mul(l_tensor, -1.), 1.), st_mid_tensor[1,:,:])
+    c_mid_tensor = torch.mul(
+        torch.mul(k_tensor,
+                  torch.sqrt(torch.sqrt(
+                      torch.div(1.,
+                                torch.add(torch.div(1., torch.pow(c_a_tensor, 4.)),
+                                          torch.div(1., torch.pow(c_b_tensor, 4.))))))
+                  ),
+        0.9
+    )
+
+    c_a_tensor = torch.mul(l_tensor, 0.4)
+    c_b_tensor = torch.mul(torch.add(torch.mul(l_tensor, -1.), 1.), 0.8)
+    c_0_tensor = torch.sqrt(torch.div(1., torch.add(torch.div(1., torch.pow(c_a_tensor, 2.)),
+                                                    torch.div(1., torch.pow(c_b_tensor, 2.)))))
+
+    return torch.stack(
+        [
+            c_0_tensor,
+            c_mid_tensor,
+            c_max_tensor
+        ]
+    )
+
+
+def srgb_from_okhsl(hsl_tensor, alpha=0.05, steps=1, steps_outer=1):
+    l_ones_mask = torch.eq(hsl_tensor[2,:,:], 1.)
+    l_zeros_mask = torch.eq(hsl_tensor[2,:,:], 0.)
+    l_ones_mask = l_ones_mask.expand(hsl_tensor.shape)
+    l_zeros_mask = l_zeros_mask.expand(hsl_tensor.shape)
+    calc_rgb_mask = torch.logical_not(torch.logical_or(l_ones_mask, l_zeros_mask))
+
+    rgb_tensor = torch.empty(hsl_tensor.shape)
+    rgb_tensor = torch.where(l_ones_mask,
+                             1.,
+                             torch.where(l_zeros_mask,
+                                         0.,
+                                         rgb_tensor))
+
+    units_ab_tensor = torch.stack(
+        [
+            torch.cos(torch.mul(hsl_tensor[0,:,:], 2.*PI)),
+            torch.sin(torch.mul(hsl_tensor[0,:,:], 2.*PI))
+        ]
+    )
+    l_tensor = toe_inverse(hsl_tensor[2,:,:])
+
+    # {C_0, C_mid, C_max}    
+    cs_tensor = get_cs_tensor(l_tensor, units_ab_tensor, steps=steps, steps_outer=steps_outer)
+
+    mid = 0.8
+    mid_inv = 1.25
+
+    s_lt_mid_mask = torch.lt(hsl_tensor[1,:,:], mid)
+    t_tensor = torch.where(
+        s_lt_mid_mask,
+        torch.mul(hsl_tensor[1,:,:], mid_inv),
+        torch.div(
+            torch.sub(hsl_tensor[1,:,:], mid),
+            1. - mid
+        )
+    )
+    k_1_tensor = torch.where(
+        s_lt_mid_mask,
+        torch.mul(cs_tensor[0,:,:], mid),
+        torch.div(
+            torch.mul(torch.mul(torch.pow(cs_tensor[1,:,:], 2.), mid_inv**2.), 1. - mid),
+            cs_tensor[0,:,:]
+        )
+    )
+    k_2_tensor = torch.where(
+        s_lt_mid_mask,
+        torch.add(torch.mul(torch.div(k_1_tensor, cs_tensor[1,:,:]), -1.), 1.),
+        torch.add(
+            torch.mul(torch.div(k_1_tensor, torch.sub(cs_tensor[2,:,:], cs_tensor[1,:,:])), -1.),
+            1.
+        )
+    )
+
+    c_tensor = torch.div(torch.mul(t_tensor, k_1_tensor),
+                         torch.add(torch.mul(torch.mul(k_2_tensor, t_tensor), -1.), 1.))
+    c_tensor = torch.where(
+        s_lt_mid_mask,
+        c_tensor,
+        torch.add(cs_tensor[1,:,:], c_tensor)
+    )
+
+    rgb_tensor = torch.where(
+        calc_rgb_mask,
+        linear_srgb_from_oklab(
+            torch.stack(
+                [
+                    l_tensor,
+                    torch.mul(c_tensor, units_ab_tensor[0,:,:]),
+                    torch.mul(c_tensor, units_ab_tensor[1,:,:])
+                ]
+            )
+        ),
+        rgb_tensor
+    )
+
+    return srgb_from_linear_srgb(rgb_tensor, alpha=alpha, steps=steps)
+
+
+def okhsl_from_srgb(rgb_tensor, steps=1, steps_outer=1):
+    lab_tensor = oklab_from_linear_srgb(linear_srgb_from_srgb(rgb_tensor))
+
+    c_tensor = torch.sqrt(
+        torch.add(torch.pow(lab_tensor[1,:,:], 2.), torch.pow(lab_tensor[2,:,:], 2.))
+    )
+    units_ab_tensor = torch.stack([torch.div(lab_tensor[1,:,:], c_tensor),
+                                   torch.div(lab_tensor[2,:,:], c_tensor)])
+
+    h_tensor = torch.add(torch.div(torch.mul(torch.atan2(torch.mul(lab_tensor[2,:,:], -1.),
+                                                         torch.mul(lab_tensor[1,:,:], -1.)),
+                                             0.5),
+                                   PI),
+                         0.5)
+
+    # {C_0, C_mid, C_max}
+    cs_tensor = get_cs_tensor(lab_tensor[0,:,:], units_ab_tensor, steps=1, steps_outer=1)
+
+    mid = 0.8
+    mid_inv = 1.25
+
+    c_lt_c_mid_mask = torch.lt(c_tensor, cs_tensor[1,:,:])
+    k_1_tensor = torch.where(
+        c_lt_c_mid_mask,
+        torch.mul(cs_tensor[0,:,:], mid),
+        torch.div(torch.mul(torch.mul(torch.pow(cs_tensor[1,:,:], 2.), mid_inv**2), 1. - mid),
+                  cs_tensor[0,:,:])
+    )
+    k_2_tensor = torch.where(
+        c_lt_c_mid_mask,
+        torch.add(torch.mul(torch.div(k_1_tensor, cs_tensor[1,:,:]), -1.), 1.),
+        torch.add(
+            torch.mul(torch.div(k_1_tensor, torch.sub(cs_tensor[2,:,:], cs_tensor[1,:,:])), -1.),
+            1.
+        )
+    )
+    t_tensor = torch.where(
+        c_lt_c_mid_mask,
+        torch.div(c_tensor, torch.add(k_1_tensor, torch.mul(k_2_tensor, c_tensor))),
+        torch.div(torch.sub(c_tensor, cs_tensor[1,:,:]),
+                  torch.add(k_1_tensor, torch.mul(k_2_tensor,
+                                                  torch.sub(c_tensor, cs_tensor[1,:,:]))))
+    )
+
+    s_tensor = torch.where(
+        c_lt_c_mid_mask,
+        torch.mul(t_tensor, mid),
+        torch.add(torch.mul(t_tensor, 1. - mid), mid)
+    )
+    l_tensor = toe(lab_tensor[0,:,:])
+
+    return torch.stack([h_tensor, s_tensor, l_tensor])
