@@ -50,6 +50,8 @@ This includes 3 Nodes:
 --------------------------------
 ### Image and Mask Composition Pack
 
+![composition pack main image](https://raw.githubusercontent.com/dwringer/composition-nodes/main/composition_pack.jpg)
+
 **Description:** This is a pack of nodes for composing masks and images, including a simple text mask creator and both image and latent offset nodes. The offsets wrap around, so these can be used in conjunction with the Seamless node to progressively generate centered on different parts of the seamless tiling.
 
 This includes 13 Nodes:
