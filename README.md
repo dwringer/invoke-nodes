@@ -52,12 +52,14 @@ This includes 3 Nodes:
 
 **Description:** This is a pack of nodes for composing masks and images, including a simple text mask creator and both image and latent offset nodes. The offsets wrap around, so these can be used in conjunction with the Seamless node to progressively generate centered on different parts of the seamless tiling.
 
-This includes 11 Nodes:
+This includes 13 Nodes:
 - *Adjust Image Hue Plus* - Rotate the hue of an image in one of several different color spaces.
 - *Blend Latents (Masked)* - Use a mask to blend part of one latents tensor into another. Can be used to "renoise" sections during a multi-stage [masked] denoising process.
+- *Equivalent Achromatic Lightness* - Calculates image lightness accounting for Helmholtz-Kohlrausch effect based on a method described by High, Green, and Nussbaum (2023).
 - *Text to Mask (Clipseg)* - Input a prompt and an image to generate a mask representing areas of the image matched by the prompt.
 - *Text to Mask Advanced (Clipseg)* - Output up to four prompt masks combined with logical "and", logical "or", or as separate channels of an RGBA image.
 - *Image Compositor* - Take a subject from an image with a flat backdrop and layer it on another image using a chroma key or flood select background removal.
+- *Image Blend* - Perform a layered blend of two images using alpha compositing. Opacity of top layer is selectable.
 - *Image Dilate or Erode* - Dilate or expand a mask (or any image!). This is equivalent to an expand/contract operation.
 - *Image Value Thresholds* - Clip an image to pure black/white beyond specified thresholds.
 - *Offset Latents* - Offset a latents tensor in the vertical and/or horizontal dimensions, wrapping it around.
