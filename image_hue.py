@@ -1,12 +1,14 @@
 # TODO: Improve blend modes
 # TODO: Add nodes like Hue Adjust for Saturation/Contrast/etc... ?
 # TODO: Continue implementing more blend modes/color spaces(?)
+# TODO: Respect existing color profile of base image
 # TODO: Custom ICC profiles with PIL.ImageCms?
 # TODO: Blend multiple layers all crammed into a tensor(?) or list
 
 # Copyright (c) 2023 Darren Ringer <dwringer@gmail.com>
 # Parts based on Oklab: Copyright (c) 2021 Björn Ottosson <https://bottosson.github.io/>
 # HSL code based on CPython: Copyright (c) 2001-2023 Python Software Foundation; All Rights Reserved
+from io import BytesIO
 import os.path
 from math import pi as PI
 from typing import Literal, Optional
@@ -94,32 +96,31 @@ BLEND_COLOR_SPACES = [
     title="Image Blend",
     tags=["image", "blend", "layer", "alpha", "composite"],
     category="image",
-    version="1.0.3",
+    version="1.0.4",
 )
 class ImageBlendInvocation(BaseInvocation):
     """Blend two images together, with optional opacity, mask, and blend modes"""
 
     layer_upper: ImageField = InputField(description="The top image to blend", ui_order=1)
-    layer_base: ImageField = InputField(description="The bottom image to blend", ui_order=2)
     blend_mode: Literal[tuple(BLEND_MODES)] = InputField(
-        default=BLEND_MODES[0], description="Available blend modes", ui_order=3
+        default=BLEND_MODES[0], description="Available blend modes", ui_order=2
     )
-    opacity: float = InputField(default=1., description="Desired opacity of the upper layer", ui_order=4)
+    opacity: float = InputField(default=1., description="Desired opacity of the upper layer", ui_order=3)
     mask: Optional[ImageField] = InputField(
-        default=None, description="Optional mask, used to restrict areas from blending", ui_order=5
+        default=None, description="Optional mask, used to restrict areas from blending", ui_order=4
     )
-    fit_to_width: bool = InputField(default=False, description="Scale upper layer to fit base width", ui_order=6)
-    fit_to_height: bool = InputField(default=True,  description="Scale upper layer to fit base height", ui_order=7)
+    fit_to_width: bool = InputField(default=False, description="Scale upper layer to fit base width", ui_order=5)
+    fit_to_height: bool = InputField(default=True,  description="Scale upper layer to fit base height", ui_order=6)
+    layer_base: ImageField = InputField(description="The bottom image to blend", ui_order=7)
     color_space: Literal[tuple(BLEND_COLOR_SPACES)] = InputField(
-        default=BLEND_COLOR_SPACES[3], description="Available color spaces for blend computations", ui_order=8
+        default=BLEND_COLOR_SPACES[1], description="Available color spaces for blend computations", ui_order=8
     )
-    linear_compositing: bool = InputField(default=True, description="Use linear-light sRGB for alpha compositing", ui_order=9)
     adaptive_gamut: float = InputField(
         default=0.0,
-        description="Adaptive gamut clipping (0=off). Higher prioritizes chroma over lightness", ui_order=10
+        description="Adaptive gamut clipping (0=off). Higher prioritizes chroma over lightness", ui_order=9
     )
     high_precision: bool = InputField(
-        default=True, description="Use more steps in computing gamut when possible", ui_order=11
+        default=True, description="Use more steps in computing gamut when possible", ui_order=10
     )
 
     
@@ -371,9 +372,7 @@ class ImageBlendInvocation(BaseInvocation):
             return rgb_tensor
 
         reassembly_function = {
-            "RGB": lambda t: srgb_from_linear_srgb(
-                t, alpha=self.adaptive_gamut, steps=(3 if self.high_precision else 1)
-            ),
+            "RGB": lambda t: linear_srgb_from_srgb(t),
             "Linear": lambda t: t,
             "HSL": lambda t: linear_srgb_from_srgb(srgb_from_hsl(t)),
             "HSV": lambda t: linear_srgb_from_srgb(
@@ -568,7 +567,7 @@ class ImageBlendInvocation(BaseInvocation):
                         )
                     )
                 )
-            else:  # Experiment: Compare only lightness, blend *all channels*, wrap around hue.
+            else:
                 g_tensor = torch.where(
                     torch.le(
                         lower_space_tensor[lightness_index,:,:], 0.25
@@ -577,25 +576,25 @@ class ImageBlendInvocation(BaseInvocation):
                                                   lower_space_tensor), 4.), lower_space_tensor),
                     torch.sqrt(lower_space_tensor)
                 )
-                lower_space_tensor = torch.where(
+                lower_space_tensor[lightness_index,:,:] = torch.where(
                     torch.le(
                         upper_space_tensor[lightness_index,:,:], 0.5
-                    ).expand(upper_space_tensor.shape),
+                    ),
                     torch.sub(
-                        lower_space_tensor,
+                        lower_space_tensor[lightness_index,:,:],
                         torch.mul(
                             torch.mul(
-                                torch.add(torch.mul(lower_space_tensor, -1.), 1.),
-                                lower_space_tensor
+                                torch.add(torch.mul(lower_space_tensor[lightness_index,:,:], -1.), 1.),
+                                lower_space_tensor[lightness_index,:,:]
                             ),
-                            torch.add(torch.mul(torch.mul(upper_space_tensor, 2.), -1.), 1.)
+                            torch.add(torch.mul(torch.mul(upper_space_tensor[lightness_index,:,:], 2.), -1.), 1.)
                         )
                     ),
                     torch.add(
-                        lower_space_tensor,
+                        lower_space_tensor[lightness_index,:,:],
                         torch.mul(
-                            torch.sub(torch.mul(upper_space_tensor, 2.), 1.),
-                            torch.sub(g_tensor, lower_space_tensor)
+                            torch.sub(torch.mul(upper_space_tensor[lightness_index,:,:], 2.), 1.),
+                            torch.sub(g_tensor, lower_space_tensor[lightness_index,:,:])
                         )
                     )
                 )
@@ -736,6 +735,33 @@ class ImageBlendInvocation(BaseInvocation):
 
         image_upper = context.services.images.get_pil_image(self.layer_upper.image_name)
         image_base = context.services.images.get_pil_image(self.layer_base.image_name)
+
+        # Keep the modes for restoration after processing:
+        image_mode_upper = image_upper.mode
+        image_mode_base = image_base.mode
+
+        # Get rid of ICC profiles by converting to sRGB, but save for restoration:
+        cms_profile_srgb = None
+        if "icc_profile" in image_upper.info:
+            cms_profile_upper = BytesIO(image_upper.info["icc_profile"])
+            cms_profile_srgb = PIL.ImageCms.createProfile("sRGB")
+            cms_xform = PIL.ImageCms.buildTransformFromOpenProfiles(
+                cms_profile_upper, cms_profile_srgb, image_upper.mode, "RGBA"
+            )
+            image_upper = PIL.ImageCms.applyTransform(image_upper, cms_xform)
+
+        cms_profile_base = None
+        icc_profile_bytes = None
+        if "icc_profile" in image_base.info:
+            icc_profile_bytes = image_base.info["icc_profile"]
+            cms_profile_base = BytesIO(icc_profile_bytes)
+            if cms_profile_srgb is None:
+                cms_profile_srgb = PIL.ImageCms.createProfile("sRGB")
+            cms_xform = PIL.ImageCms.buildTransformFromOpenProfiles(
+                cms_profile_base, cms_profile_srgb, image_base.mode, "RGBA"
+            )
+            image_base = PIL.ImageCms.applyTransform(image_base, cms_xform)
+
         image_mask = None
         if not (self.mask is None):
             image_mask = context.services.images.get_pil_image(self.mask.image_name)
@@ -745,10 +771,6 @@ class ImageBlendInvocation(BaseInvocation):
             image_upper, image_base
         )  # self.fit_to_width, self.fit_to_height
             
-        # Keep the modes for restoration after processing:
-        image_mode_upper = image_upper.mode
-        image_mode_base = image_base.mode
-
         image_tensors = (
             upper_rgb_l_tensor,  # linear-light sRGB
             lower_rgb_l_tensor,  # linear-light sRGB
@@ -782,29 +804,15 @@ class ImageBlendInvocation(BaseInvocation):
         if not (self.blend_mode == "Normal"):
             upper_rgb_l_tensor = self.apply_blend(image_tensors)
 
-        output_tensor, alpha_tensor = None, None
-        if not self.linear_compositing:
-            output_tensor, alpha_tensor = self.alpha_composite(
-                srgb_from_linear_srgb(
-                    upper_rgb_l_tensor, alpha=self.adaptive_gamut, steps=(3 if self.high_precision else 1)
-                ),
-                alpha_upper_tensor,
-                lower_rgb_tensor,
-                alpha_lower_tensor,
-                mask_tensor=mask_tensor
-            )
-        else:
-            output_tensor, alpha_tensor = self.alpha_composite(
-                upper_rgb_l_tensor,
-                alpha_upper_tensor,
-                lower_rgb_l_tensor,
-                alpha_lower_tensor,
-                mask_tensor=mask_tensor
-            )
-
-            output_tensor = srgb_from_linear_srgb(
-                output_tensor, alpha=self.adaptive_gamut, steps=(3 if self.high_precision else 1)
-            )
+        output_tensor, alpha_tensor = self.alpha_composite(
+            srgb_from_linear_srgb(
+                upper_rgb_l_tensor, alpha=self.adaptive_gamut, steps=(3 if self.high_precision else 1)
+            ),
+            alpha_upper_tensor,
+            lower_rgb_tensor,
+            alpha_lower_tensor,
+            mask_tensor=mask_tensor
+        )
 
         # Restore alpha channel and base mode:
         output_tensor = torch.stack(
@@ -816,7 +824,15 @@ class ImageBlendInvocation(BaseInvocation):
             ]
         )
         image_out = pil_image_from_tensor(output_tensor, mode="RGBA")
-        image_out = image_out.convert(image_mode_base)
+
+        # Restore ICC profile if base image had one:
+        if not (cms_profile_base is None):
+            cms_xform = PIL.ImageCms.buildTransformFromOpenProfiles(
+                cms_profile_srgb, BytesIO(icc_profile_bytes), "RGBA", image_out.mode
+            )
+            image_out = PIL.ImageCms.applyTransform(image_out, cms_xform)
+        else:
+            image_out = image_out.convert(image_mode_base)
         
         image_dto = context.services.images.create(
             image=image_out,
