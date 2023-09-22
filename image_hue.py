@@ -95,7 +95,7 @@ BLEND_COLOR_SPACES = [
     title="Image Blend",
     tags=["image", "blend", "layer", "alpha", "composite"],
     category="image",
-    version="1.0.4",
+    version="1.0.5",
 )
 class ImageBlendInvocation(BaseInvocation):
     """Blend two images together, with optional opacity, mask, and blend modes"""
@@ -215,11 +215,24 @@ class ImageBlendInvocation(BaseInvocation):
         """Convert image to the necessary image space representations for blend calculations"""
 
         # TODO: - Don't compute every tensor unless required
-        
-        # Prepare tensors to compute blend
-        image_rgba_upper, image_rgba_lower = image_upper.convert("RGBA"), image_lower.convert("RGBA")
-        alpha_upper, alpha_lower = image_rgba_upper.getchannel("A"), image_rgba_lower.getchannel("A")
-        image_upper, image_lower = image_upper.convert("RGB"), image_lower.convert("RGB")
+
+        alpha_upper, alpha_lower = None, None
+        if (image_upper.mode == "RGBA"):
+            # Prepare tensors to compute blend
+            image_rgba_upper = image_upper.convert("RGBA")
+            alpha_upper = image_rgba_upper.getchannel("A")
+            image_upper = image_upper.convert("RGB")
+        else:
+            if (not (image_upper.mode == "RGB")):
+                image_upper = image_upper.convert("RGB")
+        if (image_lower.mode == "RGBA"):
+            # Prepare tensors to compute blend
+            image_rgba_lower = image_lower.convert("RGBA")
+            alpha_lower = image_rgba_lower.getchannel("A")
+            image_lower = image_lower.convert("RGB")
+        else:
+            if (not (image_lower.mode == "RGB")):
+                image_lower = image_lower.convert("RGB")
 
         image_lab_upper, image_lab_lower = (
             self.image_convert_with_xform(image_upper, "rgb", "lab"),
@@ -229,15 +242,15 @@ class ImageBlendInvocation(BaseInvocation):
         upper_lab_tensor = torch.stack(
             [
                 tensor_from_pil_image(image_lab_upper.getchannel("L"), normalize=False)[0,:,:],
-                tensor_from_pil_image(image_lab_upper.getchannel("A"), normalize=False)[0,:,:],
-                tensor_from_pil_image(image_lab_upper.getchannel("B"), normalize=False)[0,:,:]
+                tensor_from_pil_image(image_lab_upper.getchannel("A"), normalize=True)[0,:,:],
+                tensor_from_pil_image(image_lab_upper.getchannel("B"), normalize=True)[0,:,:]
             ]
         )
         lower_lab_tensor = torch.stack(
             [
                 tensor_from_pil_image(image_lab_lower.getchannel("L"), normalize=False)[0,:,:],
-                tensor_from_pil_image(image_lab_lower.getchannel("A"), normalize=False)[0,:,:],
-                tensor_from_pil_image(image_lab_lower.getchannel("B"), normalize=False)[0,:,:]
+                tensor_from_pil_image(image_lab_lower.getchannel("A"), normalize=True)[0,:,:],
+                tensor_from_pil_image(image_lab_lower.getchannel("B"), normalize=True)[0,:,:]
             ]
         )
         upper_lch_tensor = torch.stack(
@@ -278,8 +291,16 @@ class ImageBlendInvocation(BaseInvocation):
         
         upper_rgb_tensor = tensor_from_pil_image(image_upper, normalize=False)
         lower_rgb_tensor = tensor_from_pil_image(image_lower, normalize=False)
-        alpha_upper_tensor = tensor_from_pil_image(alpha_upper, normalize=False)[0,:,:]
-        alpha_lower_tensor = tensor_from_pil_image(alpha_lower, normalize=False)[0,:,:]
+
+        alpha_upper_tensor, alpha_lower_tensor = None, None
+        if alpha_upper is None:
+            alpha_upper_tensor = torch.ones(upper_rgb_tensor[0,:,:].shape)
+        else:
+            alpha_upper_tensor = tensor_from_pil_image(alpha_upper, normalize=False)[0,:,:]
+        if alpha_lower is None:
+            alpha_lower_tensor = torch.ones(lower_rgb_tensor[0,:,:].shape)
+        else:
+            alpha_lower_tensor = tensor_from_pil_image(alpha_lower, normalize=False)[0,:,:]
 
         mask_tensor = None
         if not (mask_image is None):
@@ -399,12 +420,13 @@ class ImageBlendInvocation(BaseInvocation):
                     self.image_convert_with_xform(
                         PIL.Image.merge("LAB", tuple(map(lambda u: pil_image_from_tensor(u), [
                             t[0,:,:],
-                            torch.mul(t[1,:,:], torch.cos(t[2,:,:])),
-                            torch.mul(t[1,:,:], torch.sin(t[2,:,:]))
+                            torch.div(torch.add(torch.mul(t[1,:,:], torch.cos(t[2,:,:])), 1.), 2.),
+                            torch.div(torch.add(torch.mul(t[1,:,:], torch.sin(t[2,:,:])), 1.), 2.)
                         ]))),
                         "lab",
                         "rgb"
-                    )
+                    ),
+                    normalize=False
                 )
             ),
         }[color_space]
@@ -483,7 +505,10 @@ class ImageBlendInvocation(BaseInvocation):
             "LCh": 2,
         }[color_space]
 
-        if blend_mode == "Multiply":
+        if blend_mode == "Normal":
+            upper_rgb_l_tensor = reassembly_function(upper_space_tensor)
+
+        elif blend_mode == "Multiply":
             upper_rgb_l_tensor = reassembly_function(
                 torch.mul(lower_space_tensor, upper_space_tensor)
             )
@@ -800,8 +825,8 @@ class ImageBlendInvocation(BaseInvocation):
             image_upper, image_base, mask_image=image_mask
         )
 
-        if not (self.blend_mode == "Normal"):
-            upper_rgb_l_tensor = self.apply_blend(image_tensors)
+#        if not (self.blend_mode == "Normal"):
+        upper_rgb_l_tensor = self.apply_blend(image_tensors)
 
         output_tensor, alpha_tensor = self.alpha_composite(
             srgb_from_linear_srgb(
