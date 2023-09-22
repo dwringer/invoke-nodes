@@ -95,7 +95,7 @@ BLEND_COLOR_SPACES = [
     title="Image Blend",
     tags=["image", "blend", "layer", "alpha", "composite"],
     category="image",
-    version="1.0.5",
+    version="1.0.6",
 )
 class ImageBlendInvocation(BaseInvocation):
     """Blend two images together, with optional opacity, mask, and blend modes"""
@@ -1760,6 +1760,8 @@ def get_cs_tensor(l_tensor, units_ab_tensor, steps=1, steps_outer=1):  # -> [C_0
 def srgb_from_okhsl(hsl_tensor, alpha=0.05, steps=1, steps_outer=1):
     """Get gamma-corrected sRGB from an Okhsl image tensor"""
 
+    hsl_tensor = hsl_tensor.clamp(0., 1.)
+
     l_ones_mask = torch.eq(hsl_tensor[2,:,:], 1.)
     l_zeros_mask = torch.eq(hsl_tensor[2,:,:], 0.)
     l_ones_mask = l_ones_mask.expand(hsl_tensor.shape)
@@ -1835,7 +1837,8 @@ def srgb_from_okhsl(hsl_tensor, alpha=0.05, steps=1, steps_outer=1):
         rgb_tensor
     )
 
-    return srgb_from_linear_srgb(rgb_tensor, alpha=alpha, steps=steps)
+    rgb_tensor = srgb_from_linear_srgb(rgb_tensor, alpha=alpha, steps=steps)
+    return torch.where(torch.isnan(rgb_tensor), 0., rgb_tensor).clamp(0.,1.)
 
 
 def okhsl_from_srgb(rgb_tensor, steps=1, steps_outer=1):
@@ -1891,7 +1894,8 @@ def okhsl_from_srgb(rgb_tensor, steps=1, steps_outer=1):
     )
     l_tensor = ok_l_r_from_l_tensor(lab_tensor[0,:,:])
 
-    return torch.stack([h_tensor, s_tensor, l_tensor])
+    hsl_tensor = torch.stack([h_tensor, s_tensor, l_tensor])
+    return torch.where(torch.isnan(hsl_tensor), 0., hsl_tensor).clamp(0.,1.)
 
 
 ######################################################################################\
