@@ -1,7 +1,6 @@
 # TODO: Improve blend modes
 # TODO: Add nodes like Hue Adjust for Saturation/Contrast/etc... ?
 # TODO: Continue implementing more blend modes/color spaces(?)
-# TODO: Respect existing color profile of base image
 # TODO: Custom ICC profiles with PIL.ImageCms?
 # TODO: Blend multiple layers all crammed into a tensor(?) or list
 
