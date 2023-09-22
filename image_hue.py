@@ -1,6 +1,7 @@
 # TODO: Improve blend modes
 # TODO: Add nodes like Hue Adjust for Saturation/Contrast/etc... ?
 # TODO: Continue implementing more blend modes/color spaces(?)
+# TODO: Adaptive clipping should work on lightness / hue modes, and wrap hues around(?)
 # TODO: Custom ICC profiles with PIL.ImageCms?
 # TODO: Blend multiple layers all crammed into a tensor(?) or list
 
@@ -63,13 +64,13 @@ BLEND_MODES = [
     "Screen",
     "Overlay",
     "Linear Burn",
-#    "Difference",
+    "Difference",
     "Hard Light",
     "Soft Light",
 #    "Vivid Light",
 #    "Linear Light",
-#    "Color Burn",
-#    "Color Dodge",
+    "Color Burn",
+    "Color Dodge",
     "Hue",
     "Saturation",
     "Color",
@@ -95,7 +96,7 @@ BLEND_COLOR_SPACES = [
     title="Image Blend",
     tags=["image", "blend", "layer", "alpha", "composite"],
     category="image",
-    version="1.0.6",
+    version="1.0.7",
 )
 class ImageBlendInvocation(BaseInvocation):
     """Blend two images together, with optional opacity, mask, and blend modes"""
@@ -397,7 +398,7 @@ class ImageBlendInvocation(BaseInvocation):
             "HSL": lambda t: linear_srgb_from_srgb(srgb_from_hsl(t)),
             "HSV": lambda t: linear_srgb_from_srgb(
                 tensor_from_pil_image(
-                    pil_image_from_tensor(t, mode="HSV").convert("RGB"), normalize=False
+                    pil_image_from_tensor(t.clamp(0., 1.), mode="HSV").convert("RGB"), normalize=False
                 )
             ),
             "Okhsl": lambda t: linear_srgb_from_srgb(
@@ -419,7 +420,7 @@ class ImageBlendInvocation(BaseInvocation):
                 tensor_from_pil_image(
                     self.image_convert_with_xform(
                         PIL.Image.merge("LAB", tuple(map(lambda u: pil_image_from_tensor(u), [
-                            t[0,:,:],
+                            t[0,:,:].clamp(0.,1.),
                             torch.div(torch.add(torch.mul(t[1,:,:], torch.cos(t[2,:,:])), 1.), 2.),
                             torch.div(torch.add(torch.mul(t[1,:,:], torch.sin(t[2,:,:])), 1.), 2.)
                         ]))),
@@ -560,7 +561,7 @@ class ImageBlendInvocation(BaseInvocation):
                         1.
                     )
                 )
-            upper_rgb_l_tensor = reassembly_function(adaptive_clipped(upper_space_tensor))
+            upper_rgb_l_tensor = adaptive_clipped(reassembly_function(upper_space_tensor))
 
         # TODO:
         elif blend_mode == "Soft Light":
@@ -623,19 +624,27 @@ class ImageBlendInvocation(BaseInvocation):
                     )
                 )
                 lower_space_tensor[hue_index,:,:] = torch.remainder(lower_space_tensor[hue_index,:,:], 1.)
-            upper_rgb_l_tensor = reassembly_function(adaptive_clipped(lower_space_tensor))
+            upper_rgb_l_tensor = adaptive_clipped(reassembly_function(lower_space_tensor))
         
         elif blend_mode == "Linear Dodge (Add)":
-            upper_rgb_l_tensor = reassembly_function(
-                adaptive_clipped(torch.add(lower_space_tensor, upper_space_tensor))
+            upper_rgb_l_tensor = adaptive_clipped(
+                reassembly_function(
+                    torch.add(lower_space_tensor, upper_space_tensor)
+                )
             )
 
-        # elif blend_mode == "Color Dodge":
-        #     upper_rgb_l_tensor = torch.div(lower_rgb_l_tensor, torch.add(torch.mul(upper_rgb_l_tensor, -1.), 1.))
+        elif blend_mode == "Color Dodge":
+            upper_rgb_l_tensor = adaptive_clipped(
+                reassembly_function(
+                    torch.div(lower_rgb_l_tensor, torch.add(torch.mul(upper_space_tensor, -1.), 1.))
+                )
+            )
         
         elif blend_mode == "Divide":
-            upper_rgb_l_tensor = reassembly_function(
-                adaptive_clipped(torch.div(lower_space_tensor, upper_space_tensor))
+            upper_rgb_l_tensor = adaptive_clipped(
+                reassembly_function(
+                    torch.div(lower_space_tensor, upper_space_tensor)
+                )
             )
 
         elif blend_mode == "Linear Burn":
@@ -650,12 +659,16 @@ class ImageBlendInvocation(BaseInvocation):
                               upper_space_tensor[lightness_index,:,:]),
                     1.
                 )
-            upper_rgb_l_tensor = reassembly_function(adaptive_clipped(lower_space_tensor))
+            upper_rgb_l_tensor = adaptive_clipped(reassembly_function(lower_space_tensor))
 
-        # TODO:
-        # elif blend_mode == "Color Burn":
-        #     upper_rgb_l_tensor = torch.add(torch.mul(torch.min(torch.div(torch.add(torch.mul(lower_rgb_l_tensor, -1.), 1.), upper_rgb_l_tensor),
-        #                                                  torch.ones(lower_rgb_l_tensor.shape)), -1.), 1.)
+        elif blend_mode == "Color Burn":
+            upper_rgb_l_tensor = adaptive_clipped(
+                reassembly_function(
+                    torch.add(torch.mul(torch.min(torch.div(torch.add(torch.mul(lower_space_tensor, -1.), 1.),
+                                                            upper_space_tensor),
+                                                  torch.ones(lower_space_tensor.shape)), -1.), 1.)
+                )
+            )
         # elif blend_mode == "Vivid Light":
         #     upper_rgb_l_tensor = torch.where(
         #         torch.lt(upper_rgb_l_tensor, 0.5),
@@ -667,13 +680,18 @@ class ImageBlendInvocation(BaseInvocation):
         #     upper_rgb_l_tensor = torch.sub(torch.add(lower_rgb_l_tensor, torch.mul(upper_rgb_l_tensor, 2.)), 1.)
 
         elif blend_mode == "Subtract":
-            upper_rgb_l_tensor = reassembly_function(
-                torch.sub(lower_space_tensor, upper_space_tensor)
+            upper_rgb_l_tensor = adaptive_clipped(
+                reassembly_function(
+                    torch.sub(lower_space_tensor, upper_space_tensor)
+                )
             )
 
-        # TODO:
-        # elif blend_mode == "Difference":
-        #     upper_rgb_l_tensor = torch.abs(torch.sub(lower_rgb_l_tensor, upper_rgb_l_tensor))
+        elif blend_mode == "Difference":
+            upper_rgb_l_tensor = adaptive_clipped(
+                reassembly_function(
+                    torch.abs(torch.sub(lower_space_tensor, upper_space_tensor))
+                )
+            )
 
         elif (blend_mode == "Darken Only") or (blend_mode == "Lighten Only"):
             extrema_fn = torch.min if (blend_mode == "Darken Only") else torch.max
