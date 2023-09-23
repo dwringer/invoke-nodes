@@ -57,6 +57,12 @@ BLEND_MODES = [
     "Normal",
     "Lighten Only",
     "Darken Only",
+    "Lighten Only (EAL)",
+    "Darken Only (EAL)",
+    "Hue",
+    "Saturation",
+    "Color",
+    "Luminosity",
     "Linear Dodge (Add)",
     "Subtract",
     "Multiply",
@@ -67,15 +73,10 @@ BLEND_MODES = [
     "Difference",
     "Hard Light",
     "Soft Light",
-#    "Vivid Light",
-#    "Linear Light",
+    "Vivid Light",
+    "Linear Light",
     "Color Burn",
     "Color Dodge",
-    "Hue",
-    "Saturation",
-    "Color",
-    "Luminosity",
-    "Lighten Only (EAL)"
 ]
 
 
@@ -96,7 +97,7 @@ BLEND_COLOR_SPACES = [
     title="Image Blend",
     tags=["image", "blend", "layer", "alpha", "composite"],
     category="image",
-    version="1.0.7",
+    version="1.0.8",
 )
 class ImageBlendInvocation(BaseInvocation):
     """Blend two images together, with optional opacity, mask, and blend modes"""
@@ -669,15 +670,84 @@ class ImageBlendInvocation(BaseInvocation):
                                                   torch.ones(lower_space_tensor.shape)), -1.), 1.)
                 )
             )
-        # elif blend_mode == "Vivid Light":
-        #     upper_rgb_l_tensor = torch.where(
-        #         torch.lt(upper_rgb_l_tensor, 0.5),
-        #         torch.div(torch.add(torch.mul(torch.div(torch.add(torch.mul(lower_rgb_l_tensor, -1.), 1.), upper_rgb_l_tensor),
-        #                                       -1.), 1.), 2.),
-        #         torch.div(torch.div(lower_rgb_l_tensor, torch.add(torch.mul(upper_rgb_l_tensor, -1.), 1.)), 2.)
-        #     )
-        # elif blend_mode == "Linear Light":
-        #     upper_rgb_l_tensor = torch.sub(torch.add(lower_rgb_l_tensor, torch.mul(upper_rgb_l_tensor, 2.)), 1.)
+        elif blend_mode == "Vivid Light":
+            if lightness_index is None:
+                lower_space_tensor = adaptive_clipped(
+                    reassembly_function(
+                        torch.where(
+                            torch.lt(upper_space_tensor, 0.5),
+                            torch.div(
+                                torch.add(
+                                    torch.mul(
+                                        torch.div(
+                                            torch.add(torch.mul(lower_space_tensor, -1.), 1.),
+                                            upper_space_tensor
+                                        ),
+                                        -1.
+                                    ),
+                                    1.
+                                ),
+                                2.
+                            ),
+                            torch.div(
+                                torch.div(
+                                    lower_space_tensor,
+                                    torch.add(torch.mul(upper_space_tensor, -1.), 1.)
+                                ),
+                                2.
+                            )
+                        )
+                    )
+                )
+            else:
+                lower_space_tensor[lightness_index,:,:] = torch.where(
+                    torch.lt(upper_space_tensor[lightness_index,:,:], 0.5),
+                    torch.div(
+                        torch.add(
+                            torch.mul(
+                                torch.div(
+                                    torch.add(torch.mul(lower_space_tensor[lightness_index,:,:], -1.), 1.),
+                                    upper_space_tensor[lightness_index,:,:]
+                                ),
+                                -1.
+                            ),
+                            1.
+                        ),
+                        2.
+                    ),
+                    torch.div(
+                        torch.div(
+                            lower_space_tensor[lightness_index,:,:],
+                            torch.add(torch.mul(upper_space_tensor[lightness_index,:,:], -1.), 1.)
+                        ),
+                        2.
+                    )
+                )
+            upper_rgb_l_tensor = adaptive_clipped(
+                reassembly_function(
+                    lower_space_tensor
+                )
+            )
+                
+        elif blend_mode == "Linear Light":
+            if lightness_index is None:
+                lower_space_tensor = torch.sub(
+                    torch.add(lower_space_tensor, torch.mul(upper_space_tensor, 2.)),
+                    1.
+                )
+            else:
+                lower_space_tensor[lightness_index,:,:] = torch.sub(
+                    torch.add(lower_space_tensor[lightness_index,:,:],
+                              torch.mul(upper_space_tensor[lightness_index,:,:], 2.)),
+                    1.
+                )
+                
+                
+            upper_rgb_l_tensor = adaptive_clipped(
+                reassembly_function(
+                    lower_space_tensor
+                )
+            )
 
         elif blend_mode == "Subtract":
             upper_rgb_l_tensor = adaptive_clipped(
@@ -811,7 +881,11 @@ class ImageBlendInvocation(BaseInvocation):
         
         image_upper = self.scale_and_pad_or_crop_to_base(
             image_upper, image_base
-        )  # self.fit_to_width, self.fit_to_height
+        )
+        if image_mask is not None:
+            image_mask = self.scale_and_pad_or_crop_to_base(
+                image_mask, image_base
+            )
             
         image_tensors = (
             upper_rgb_l_tensor,  # linear-light sRGB
