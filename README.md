@@ -61,7 +61,7 @@ This includes 13 Nodes:
 - *Text to Mask (Clipseg)* - Input a prompt and an image to generate a mask representing areas of the image matched by the prompt.
 - *Text to Mask Advanced (Clipseg)* - Output up to four prompt masks combined with logical "and", logical "or", or as separate channels of an RGBA image.
 - *Image Compositor* - Take a subject from an image with a flat backdrop and layer it on another image using a chroma key or flood select background removal.
-- *Image Blend* - Perform a layered blend of two images using alpha compositing. Opacity of top layer is selectable.
+- *Image Layer Blend* - Perform a layered blend of two images using alpha compositing. Opacity of top layer is selectable.
 - *Image Dilate or Erode* - Dilate or expand a mask (or any image!). This is equivalent to an expand/contract operation.
 - *Image Value Thresholds* - Clip an image to pure black/white beyond specified thresholds.
 - *Offset Latents* - Offset a latents tensor in the vertical and/or horizontal dimensions, wrapping it around.
