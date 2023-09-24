@@ -4,7 +4,6 @@ Note: This repo houses the development branch of these nodes, and potentially bu
 
 - https://github.com/dwringer/composition-nodes
 - https://github.com/dwringer/depth-from-obj-node
-- https://github.com/dwringer/image-enhance-node
 - https://github.com/dwringer/generative-grammar-prompt-nodes
 - https://github.com/dwringer/size-stepper-nodes
 
@@ -19,18 +18,6 @@ To be imported, an .obj must use triangulated meshes, so make sure to enable tha
 
 **Example Usage:**
 ![depth from obj usage graph](https://raw.githubusercontent.com/dwringer/depth-from-obj-node/main/depth_from_obj_usage.jpg)
-
---------------------------------
-### Enhance Image (simple adjustments)
-
-**Description:** Boost or reduce color saturation, contrast, brightness, sharpness, or invert colors of any image at any stage with this simple wrapper for pillow [PIL]'s ImageEnhance module.
-
-Color inversion is toggled with a simple switch, while each of the four enhancer modes are activated by entering a value other than 1 in each corresponding input field. Values less than 1 will reduce the corresponding property, while values greater than 1 will enhance it.
-
-**Node Link:** https://github.com/dwringer/image-enhance-node
-
-**Example Usage:**
-![enhance image usage graph](https://raw.githubusercontent.com/dwringer/image-enhance-node/main/image_enhance_usage.jpg)
 
 --------------------------------
 ### Generative Grammar-Based Prompt Nodes
@@ -54,9 +41,10 @@ This includes 3 Nodes:
 
 **Description:** This is a pack of nodes for composing masks and images, including a simple text mask creator and both image and latent offset nodes. The offsets wrap around, so these can be used in conjunction with the Seamless node to progressively generate centered on different parts of the seamless tiling.
 
-This includes 13 Nodes:
+This includes 14 Nodes:
 - *Adjust Image Hue Plus* - Rotate the hue of an image in one of several different color spaces.
 - *Blend Latents (Masked)* - Use a mask to blend part of one latents tensor into another. Can be used to "renoise" sections during a multi-stage [masked] denoising process.
+- *Enhance Image* - Boost or reduce color saturation, contrast, brightness, sharpness, or invert colors of any image at any stage with this simple wrapper for pillow [PIL]'s ImageEnhance module.
 - *Equivalent Achromatic Lightness* - Calculates image lightness accounting for Helmholtz-Kohlrausch effect based on a method described by High, Green, and Nussbaum (2023).
 - *Text to Mask (Clipseg)* - Input a prompt and an image to generate a mask representing areas of the image matched by the prompt.
 - *Text to Mask Advanced (Clipseg)* - Output up to four prompt masks combined with logical "and", logical "or", or as separate channels of an RGBA image.
