@@ -54,7 +54,7 @@ This includes 15 Nodes:
 - *Image Value Thresholds* - Clip an image to pure black/white beyond specified thresholds.
 - *Offset Latents* - Offset a latents tensor in the vertical and/or horizontal dimensions, wrapping it around.
 - *Offset Image* - Offset an image in the vertical and/or horizontal dimensions, wrapping it around.
-- *Rotate Image* - Rotate an image in degrees about its center, optionally resizing the image boundaries to fit.
+- *Rotate/Flip Image* - Rotate an image in degrees about its center, optionally resizing the image boundaries to fit or flipping it about the vertical and/or horizontal axes.
 - *Shadows/Highlights/Midtones* - Extract three masks (with adjustable hard or soft thresholds) representing shadows, midtones, and highlights regions of an image.
 - *Text Mask (simple 2D)* - create and position a white on black (or black on white) line of text using any font locally available to Invoke.
 
