@@ -41,7 +41,7 @@ This includes 3 Nodes:
 
 **Description:** This is a pack of nodes for composing masks and images, including a simple text mask creator and both image and latent offset nodes. The offsets wrap around, so these can be used in conjunction with the Seamless node to progressively generate centered on different parts of the seamless tiling.
 
-This includes 14 Nodes:
+This includes 15 Nodes:
 - *Adjust Image Hue Plus* - Rotate the hue of an image in one of several different color spaces.
 - *Blend Latents (Masked)* - Use a mask to blend part of one latents tensor into another. Can be used to "renoise" sections during a multi-stage [masked] denoising process.
 - *Enhance Image* - Boost or reduce color saturation, contrast, brightness, sharpness, or invert colors of any image at any stage with this simple wrapper for pillow [PIL]'s ImageEnhance module.
@@ -54,6 +54,7 @@ This includes 14 Nodes:
 - *Image Value Thresholds* - Clip an image to pure black/white beyond specified thresholds.
 - *Offset Latents* - Offset a latents tensor in the vertical and/or horizontal dimensions, wrapping it around.
 - *Offset Image* - Offset an image in the vertical and/or horizontal dimensions, wrapping it around.
+- *Rotate Image* - Rotate an image in degrees about its center, optionally resizing the image boundaries to fit.
 - *Shadows/Highlights/Midtones* - Extract three masks (with adjustable hard or soft thresholds) representing shadows, midtones, and highlights regions of an image.
 - *Text Mask (simple 2D)* - create and position a white on black (or black on white) line of text using any font locally available to Invoke.
 
